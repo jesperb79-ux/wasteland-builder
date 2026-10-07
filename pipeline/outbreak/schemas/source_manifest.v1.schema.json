@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "source_manifest.v1.schema.json",
+  "title": "SourceManifest v1",
+  "description": "Exactly which inputs an OutbreakGeo was built from, pinned by SHA-256, so a later build can say what it used instead of re-reading whatever OpenStreetMap holds that day. Embedded in OutbreakGeo at provenance.sources.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "place", "pipeline", "inputs", "pinning"],
+  "properties": {
+    "schema": {"const": "outbreak-source-manifest"},
+    "schema_version": {"const": 1},
+    "place": {
+      "type": "object", "additionalProperties": false, "required": ["center", "bbox_wgs84", "size_m", "query", "nominatim_osm"],
+      "properties": {
+        "center": {
+          "type": "object", "additionalProperties": false, "required": ["lat", "lon"],
+          "properties": {"lat": {"type": "number", "minimum": -90, "maximum": 90}, "lon": {"type": "number", "minimum": -180, "maximum": 180}}
+        },
+        "bbox_wgs84": {
+          "anyOf": [
+            {"type": "null"},
+            {"type": "object", "additionalProperties": false, "required": ["south", "west", "north", "east"],
+             "properties": {"south": {"type": "number"}, "west": {"type": "number"}, "north": {"type": "number"}, "east": {"type": "number"}}}
+          ],
+          "description": "place.json's play-area box (null when it is missing or not a box)."
+        },
+        "size_m": {"type": ["number", "null"]},
+        "query": {"type": ["string", "null"]},
+        "nominatim_osm": {"type": ["object", "null"], "description": "The OSM element Nominatim matched, as place.json stores it."}
+      }
+    },
+    "pipeline": {
+      "type": "object", "additionalProperties": false, "required": ["name", "version", "commit", "dirty", "wasteland_city_version", "code_sha256", "runtime"],
+      "properties": {
+        "name": {"type": "string"}, "version": {"type": "string"},
+        "code_sha256": {
+          "type": "object", "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "description": "SHA-256 (line endings normalised) of Wasteland's preprocessing (common.py, prepare_city.py, style.json) and every adapter file and schema: pinned even when the checkout is dirty."
+        },
+        "runtime": {
+          "type": "object", "additionalProperties": false, "required": ["python", "shapely", "geos", "numpy"],
+          "properties": {"python": {"type": "string"}, "shapely": {"type": "string"}, "geos": {"type": "string"}, "numpy": {"type": "string"}},
+          "description": "Library versions that can change computed geometry."
+        },
+        "commit": {"type": ["string", "null"], "description": "git HEAD of wasteland-builder when the adapter ran; null outside a git checkout."},
+        "dirty": {"type": ["boolean", "null"], "description": "true: the working tree differed from that commit."},
+        "wasteland_city_version": {"type": "integer"}
+      }
+    },
+    "inputs": {
+      "type": "object", "additionalProperties": false, "required": ["place", "city", "osm", "terrain", "wasteland_overrides"],
+      "properties": {
+        "place": {"$ref": "#/$defs/file"},
+        "city": {
+          "type": "object", "additionalProperties": false, "required": ["file", "present", "sha256", "bytes", "encoding", "clean_rebuild"],
+          "properties": {
+            "file": {"type": ["string", "null"]}, "present": {"type": "boolean"}, "sha256": {"$ref": "#/$defs/sha256"}, "bytes": {"type": ["integer", "null"]},
+            "encoding": {"$ref": "#/$defs/encoding"},
+            "clean_rebuild": {"type": "boolean", "description": "true: city.json equals what prepare_city makes from the pinned place.json, osm.json and terrain.json with the pinned code and no refinements."}
+          }
+        },
+        "osm": {
+          "type": "object", "additionalProperties": false, "required": ["file", "present", "sha256", "bytes", "encoding", "generator", "timestamp_osm_base", "elements"],
+          "properties": {
+            "file": {"type": ["string", "null"]}, "present": {"type": "boolean"}, "sha256": {"$ref": "#/$defs/sha256"}, "bytes": {"type": ["integer", "null"]},
+            "encoding": {"$ref": "#/$defs/encoding"},
+            "generator": {"type": ["string", "null"]},
+            "timestamp_osm_base": {"type": ["string", "null"], "description": "As osm.json states it (Wasteland's fetch records the data source here, not a time)."},
+            "elements": {"type": ["integer", "null"]}
+          }
+        },
+        "terrain": {
+          "type": "object", "additionalProperties": false, "required": ["file", "present", "sha256", "bytes", "encoding", "source", "kind", "tiles", "attribution"],
+          "properties": {
+            "file": {"type": ["string", "null"]}, "present": {"type": "boolean"}, "sha256": {"$ref": "#/$defs/sha256"}, "bytes": {"type": ["integer", "null"]},
+            "encoding": {"$ref": "#/$defs/encoding"},
+            "source": {"type": ["string", "null"]}, "kind": {"enum": ["dsm", "dtm", null]},
+            "tiles": {"type": "array", "items": {"type": "string"}, "description": "Copernicus tile names / Lantmäteriet STAC item ids."},
+            "attribution": {"type": ["string", "null"]}
+          }
+        },
+        "wasteland_overrides": {
+          "type": "object", "additionalProperties": false, "required": ["file", "present", "sha256", "bytes", "encoding", "build_settings"],
+          "description": "Wasteland's overrides.json. Anything in it but these build settings makes the adapter refuse the city.",
+          "properties": {
+            "file": {"type": ["string", "null"]}, "present": {"type": "boolean"}, "sha256": {"$ref": "#/$defs/sha256"}, "bytes": {"type": ["integer", "null"]},
+            "encoding": {"$ref": "#/$defs/encoding"},
+            "build_settings": {
+              "type": "object", "additionalProperties": false,
+              "properties": {"terrain": {"type": "boolean"}, "terrain_scale": {"type": "number", "exclusiveMinimum": 0}}
+            }
+          }
+        },
+        "outbreak_overrides": {"$ref": "#/$defs/file", "description": "Reserved for P01, when OutbreakOverrides are applied at build time."}
+      }
+    },
+    "pinning": {"type": "string"}
+  },
+  "$defs": {
+    "sha256": {"anyOf": [{"type": "null"}, {"type": "string", "pattern": "^[0-9a-f]{64}$"}]},
+    "encoding": {"enum": ["utf-8", "cp1252", null], "description": "How the file was decoded: UTF-8, else Windows-1252 (Wasteland on Western Windows), whatever the locale."},
+    "file": {
+      "type": "object", "additionalProperties": false, "required": ["file", "present", "sha256", "bytes", "encoding"],
+      "properties": {"file": {"type": ["string", "null"]}, "present": {"type": "boolean"}, "sha256": {"$ref": "#/$defs/sha256"}, "bytes": {"type": ["integer", "null"]},
+                     "encoding": {"$ref": "#/$defs/encoding"}}
+    }
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gameplay_layer.v1.schema.json",
+  "title": "GameplayLayer v1",
+  "description": "Outbreak's gameplay changes to a real place, kept apart from its geography (OutbreakGeo) and its art corrections (OutbreakOverrides). P00 defines the contract only: no system reads it yet. Positions are OutbreakGeo metres or OutbreakGeo ids, never studs.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "city", "features"],
+  "properties": {
+    "schema": {"const": "outbreak-gameplay-layer"},
+    "schema_version": {"const": 1},
+    "city": {"type": "string"},
+    "geo_sha256": {"anyOf": [{"type": "null"}, {"type": "string", "pattern": "^[0-9a-f]{64}$"}]},
+    "features": {"type": "array", "items": {"$ref": "#/$defs/feature"}}
+  },
+  "$defs": {
+    "point": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+    "anchor": {
+      "anyOf": [
+        {"type": "object", "additionalProperties": false, "required": ["road", "s_m"],
+         "properties": {"road": {"type": "string"}, "s_m": {"type": "number", "minimum": 0}, "offset_m": {"type": "number", "description": "Sideways from the centreline, positive to the left."}}},
+        {"type": "object", "additionalProperties": false, "required": ["point_m"], "properties": {"point_m": {"$ref": "#/$defs/point"}, "heading_deg": {"type": "number"}}},
+        {"type": "object", "additionalProperties": false, "required": ["building"], "properties": {"building": {"type": "string"}}},
+        {"type": "object", "additionalProperties": false, "required": ["polygon_m"], "properties": {"polygon_m": {"type": "array", "items": {"$ref": "#/$defs/point"}, "minItems": 3}}},
+        {"type": "object", "additionalProperties": false, "required": ["polyline_m"], "properties": {"polyline_m": {"type": "array", "items": {"$ref": "#/$defs/point"}, "minItems": 2}}},
+        {"type": "object", "additionalProperties": false, "required": ["roads"], "properties": {"roads": {"type": "array", "items": {"type": "string"}, "minItems": 1}}}
+      ]
+    },
+    "feature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "anchor"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^\\S+$"},
+        "type": {
+          "enum": ["blocked_road", "abandoned_vehicle", "barricade", "zombie_spawn", "loot", "zone", "interior", "route"],
+          "description": "zone: a safe or danger zone (params.kind); interior: an interior-enabled building; route: a gameplay route."
+        },
+        "anchor": {"$ref": "#/$defs/anchor"},
+        "params": {"type": "object", "description": "Per-type settings; defined when the system that reads them exists."},
+        "note": {"type": "string"}
+      }
+    }
+  }
+}

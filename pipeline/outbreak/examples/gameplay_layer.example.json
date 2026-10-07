@@ -1,0 +1,15 @@
+{
+  "schema": "outbreak-gameplay-layer",
+  "schema_version": 1,
+  "city": "synthby",
+  "geo_sha256": null,
+  "features": [
+    {"id": "block-1", "type": "blocked_road", "anchor": {"road": "w1", "s_m": 120.0}, "params": {"by": "barricade"}},
+    {"id": "car-1", "type": "abandoned_vehicle", "anchor": {"road": "w2", "s_m": 60.0, "offset_m": -2.5}},
+    {"id": "spawn-1", "type": "zombie_spawn", "anchor": {"point_m": [-60.0, -95.0]}, "params": {"rate_per_min": 2}},
+    {"id": "loot-1", "type": "loot", "anchor": {"building": "w12"}},
+    {"id": "safe-1", "type": "zone", "anchor": {"polygon_m": [[45, 20], [100, 20], [100, 55], [45, 55]]}, "params": {"kind": "safe"}},
+    {"id": "church", "type": "interior", "anchor": {"building": "w13"}},
+    {"id": "escape", "type": "route", "anchor": {"roads": ["w1", "w2"]}}
+  ]
+}

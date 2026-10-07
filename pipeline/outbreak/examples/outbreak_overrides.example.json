@@ -1,0 +1,17 @@
+{
+  "schema": "outbreak-overrides",
+  "schema_version": 1,
+  "city": "synthby",
+  "geo_sha256": null,
+  "buildings": {
+    "w13": {"lod": "A", "roof_archetype": "church-steep-gable", "basis": "art_direction",
+            "source": {"reference": "Art direction log 2026-10, item 3", "by": "Outbreak art lead", "date": "2026-10-07"},
+            "note": "The church is a landmark: unique mesh later."},
+    "w11": {"lod": "B", "levels": 4, "facade_archetype": "nordic-plaster-block", "basis": "site_visit",
+            "source": {"reference": "Site visit notes, Storgatan, entry 12", "by": "Outbreak level designer", "date": "2026-10-05"},
+            "note": "Counted on site: four storeys, not five."},
+    "w10": {"lod": "C", "hide": true, "basis": "osm_correction",
+            "source": {"reference": "OSM note 0000000 (example)", "by": "Outbreak level designer", "date": "2026-10-05"},
+            "note": "Demolished; OSM ticket filed."}
+  }
+}

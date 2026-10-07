@@ -1,0 +1,299 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "outbreak_geo.v1.schema.json",
+  "title": "OutbreakGeo v1",
+  "description": "A real place's geography for Outbreak: semantic and Roblox-neutral. Every length is in metres on a local plane centred on the place (x east, y north, z up); studs never appear here. Written by pipeline/outbreak/adapter.py; see docs/outbreak-real-city.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "metadata", "provenance", "terrain", "roads", "buildings", "areas", "navigation", "chunks"],
+  "properties": {
+    "schema": {"const": "outbreak-geo"},
+    "schema_version": {"const": 1},
+    "metadata": {"$ref": "#/$defs/metadata"},
+    "provenance": {"$ref": "#/$defs/provenance"},
+    "terrain": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/terrain"}], "description": "null: the city is flat (heights 0)."},
+    "roads": {"type": "array", "items": {"$ref": "#/$defs/road"}},
+    "buildings": {"type": "array", "items": {"$ref": "#/$defs/building"}},
+    "areas": {"type": "array", "items": {"$ref": "#/$defs/area"}},
+    "navigation": {"$ref": "#/$defs/navigation"},
+    "chunks": {"type": "array", "items": {"$ref": "#/$defs/chunk"}}
+  },
+  "$defs": {
+    "text_or_null": {"type": ["string", "null"]},
+    "number_or_null": {"type": ["number", "null"]},
+    "point": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+    "ring": {"type": "array", "items": {"$ref": "#/$defs/point"}, "minItems": 3, "description": "No repeated closing point."},
+    "polyline": {"type": "array", "items": {"$ref": "#/$defs/point"}, "minItems": 2},
+    "polygon": {
+      "type": "object", "additionalProperties": false, "required": ["outer", "holes"],
+      "properties": {"outer": {"$ref": "#/$defs/ring"}, "holes": {"type": "array", "items": {"$ref": "#/$defs/ring"}}}
+    },
+    "chunk_id": {"type": "string", "pattern": "^c-?[0-9]+_-?[0-9]+$"},
+    "chunk_ids": {"type": "array", "items": {"$ref": "#/$defs/chunk_id"}, "minItems": 1},
+    "feature_id": {"type": "string", "pattern": "^\\S+$"},
+    "origin": {"enum": ["osm", "derived", "default", "inferred", "mixed", "unknown", "none"]},
+    "osm_ref": {
+      "anyOf": [
+        {"type": "null"},
+        {"type": "object", "additionalProperties": false, "required": ["type", "id"],
+         "properties": {"type": {"enum": ["node", "way", "relation"]}, "id": {"type": "integer", "minimum": 1}}}
+      ]
+    },
+    "latlon": {
+      "type": "object", "additionalProperties": false, "required": ["lat", "lon"],
+      "properties": {"lat": {"type": "number", "minimum": -90, "maximum": 90}, "lon": {"type": "number", "minimum": -180, "maximum": 180}}
+    },
+    "generator": {
+      "type": "object", "additionalProperties": false, "required": ["name", "version", "commit", "dirty"],
+      "properties": {"name": {"type": "string"}, "version": {"type": "string"}, "commit": {"$ref": "#/$defs/text_or_null"}, "dirty": {"type": ["boolean", "null"]}}
+    },
+    "metadata": {
+      "type": "object", "additionalProperties": false,
+      "required": ["generator", "source_city", "synthetic", "center", "bounds", "coordinates", "chunking", "warnings"],
+      "properties": {
+        "generator": {"$ref": "#/$defs/generator"},
+        "source_city": {
+          "type": "object", "additionalProperties": false,
+          "required": ["slug", "name", "display_name", "country_code", "wasteland_city_version"],
+          "properties": {
+            "slug": {"$ref": "#/$defs/text_or_null"}, "name": {"type": "string"}, "display_name": {"type": "string"},
+            "country_code": {"type": "string"}, "wasteland_city_version": {"type": "integer"}
+          }
+        },
+        "synthetic": {"type": "boolean", "description": "true: made from synthetic test data, not a real place; never publish."},
+        "center": {"$ref": "#/$defs/latlon"},
+        "bounds": {
+          "type": "object", "additionalProperties": false, "required": ["min_m", "max_m", "size_m", "wgs84"],
+          "properties": {
+            "min_m": {"$ref": "#/$defs/point"}, "max_m": {"$ref": "#/$defs/point"}, "size_m": {"type": "number", "exclusiveMinimum": 0},
+            "wgs84": {
+              "type": "object", "additionalProperties": false, "required": ["south", "west", "north", "east"],
+              "properties": {"south": {"type": "number"}, "west": {"type": "number"}, "north": {"type": "number"}, "east": {"type": "number"}}
+            }
+          }
+        },
+        "coordinates": {
+          "type": "object", "additionalProperties": false,
+          "required": ["unit", "frame", "origin", "axes", "projection", "to_local", "rings", "heights"],
+          "properties": {
+            "unit": {"const": "m"}, "frame": {"type": "string"}, "origin": {"type": "string"},
+            "axes": {
+              "type": "object", "additionalProperties": false, "required": ["x", "y", "z"],
+              "properties": {"x": {"const": "east"}, "y": {"const": "north"}, "z": {"const": "up"}}
+            },
+            "projection": {"type": "string"}, "to_local": {"type": "string"}, "rings": {"type": "string"}, "heights": {"type": "string"}
+          }
+        },
+        "chunking": {
+          "type": "object", "additionalProperties": false, "required": ["scheme", "size_m", "origin_m", "cell", "id_format", "count"],
+          "properties": {
+            "scheme": {"type": "string"}, "size_m": {"type": "number", "exclusiveMinimum": 0}, "origin_m": {"const": [0.0, 0.0], "description": "v1 anchors the grid at the place centre."},
+            "cell": {"type": "string"}, "id_format": {"const": "c{i}_{j}"}, "count": {"type": "integer", "minimum": 1}
+          }
+        },
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "provenance": {
+      "type": "object", "additionalProperties": false, "required": ["attribution", "licenses", "origins", "area_classes", "policy", "sources"],
+      "properties": {
+        "attribution": {"type": "array", "items": {"type": "string"}, "minItems": 1, "description": "Show these, verbatim, wherever the place is shown."},
+        "licenses": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["data", "license", "attribution", "url"],
+            "properties": {"data": {"type": "string"}, "license": {"$ref": "#/$defs/text_or_null"}, "attribution": {"type": "string"}, "url": {"$ref": "#/$defs/text_or_null"}}
+          }
+        },
+        "origins": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object", "additionalProperties": false, "required": ["description", "confidence"],
+            "properties": {"description": {"type": "string"}, "confidence": {"enum": ["high", "medium", "low", "unknown", "none"]}}
+          }
+        },
+        "area_classes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object", "additionalProperties": false, "required": ["origin", "wasteland_layers", "description"],
+            "properties": {"origin": {"$ref": "#/$defs/origin"}, "wasteland_layers": {"type": "array", "items": {"type": "string"}}, "description": {"type": "string"}}
+          }
+        },
+        "policy": {
+          "type": "object", "additionalProperties": false, "required": ["street_view", "wasteland_refinements", "city_json"],
+          "properties": {"street_view": {"type": "string"}, "wasteland_refinements": {"type": "string"},
+                         "city_json": {"type": "string", "description": "Whether city.json was proven equal to a clean rebuild (sources.inputs.city.clean_rebuild)."}}
+        },
+        "sources": {"$ref": "source_manifest.v1.schema.json"}
+      }
+    },
+    "terrain": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source", "kind", "attribution", "processing", "grid", "heights_m", "vertical_datum", "range_in_bounds_m"],
+      "properties": {
+        "source": {"$ref": "#/$defs/text_or_null"},
+        "kind": {"enum": ["dsm", "dtm", null], "description": "dsm: surface model (Copernicus), dtm: ground model (Lantmäteriet)."},
+        "attribution": {"$ref": "#/$defs/text_or_null"},
+        "processing": {"type": "string"},
+        "grid": {
+          "type": "object", "additionalProperties": false, "required": ["origin_m", "step_m", "n", "layout"],
+          "properties": {"origin_m": {"$ref": "#/$defs/point"}, "step_m": {"type": "number", "exclusiveMinimum": 0}, "n": {"type": "integer", "minimum": 2}, "layout": {"type": "string"}}
+        },
+        "heights_m": {"type": "array", "items": {"type": "number"}, "minItems": 4},
+        "vertical_datum": {
+          "type": "object", "additionalProperties": false, "required": ["zero", "water_surface_m", "scale", "source_height_of_zero_m", "to_source_height"],
+          "properties": {
+            "zero": {"type": "string"}, "water_surface_m": {"type": "number"}, "scale": {"type": "number", "exclusiveMinimum": 0},
+            "source_height_of_zero_m": {"$ref": "#/$defs/number_or_null"}, "to_source_height": {"type": "string"}
+          }
+        },
+        "range_in_bounds_m": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2}
+      }
+    },
+    "road": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "osm", "name", "class", "drivable", "width_m", "surface", "centerline", "length_m", "nodes", "layer", "tags", "chunks", "spans", "provenance"],
+      "properties": {
+        "id": {"$ref": "#/$defs/feature_id"},
+        "osm": {"$ref": "#/$defs/osm_ref"},
+        "name": {"type": "string"},
+        "class": {"type": "string", "description": "The OSM highway value (residential, tertiary, footway …)."},
+        "drivable": {"type": "boolean", "description": "A highway class a car can physically drive on (pedestrian streets excluded). Legal access and one-way rules are in tags."},
+        "width_m": {"type": "number", "exclusiveMinimum": 0, "description": "Carriageway width (without sidewalks); path width for footways."},
+        "surface": {"$ref": "#/$defs/text_or_null"},
+        "centerline": {"$ref": "#/$defs/polyline", "description": "The whole OSM way; it may run past the bounds. Spans cover the part inside."},
+        "length_m": {"type": "number", "minimum": 0},
+        "nodes": {
+          "anyOf": [{"type": "null"}, {"type": "array", "items": {"type": "integer", "minimum": 1}}],
+          "description": "The OSM node id of each centreline vertex, when osm.json has them (Overpass does; Wasteland's primary download doesn't): null when unknown."
+        },
+        "layer": {"type": ["integer", "null"], "description": "OSM layer (0 when untagged; null when unknown). Roads meet only at a junction (navigation.junctions)."},
+        "tags": {
+          "type": "object", "additionalProperties": {"type": "string"},
+          "description": "The OSM tags that decide traversal, verbatim when present: layer, level, bridge, tunnel, covered, oneway, junction, access, vehicle, motor_vehicle, motorcar, foot, bicycle, service."
+        },
+        "chunks": {"$ref": "#/$defs/chunk_ids"},
+        "spans": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["chunk", "s0_m", "s1_m"],
+            "properties": {"chunk": {"$ref": "#/$defs/chunk_id"}, "s0_m": {"type": "number", "minimum": 0}, "s1_m": {"type": "number", "minimum": 0}}
+          },
+          "description": "Arc lengths along the centreline, full precision, s0_m < s1_m, in order: the part inside the bounds, cut at chunk borders."
+        },
+        "provenance": {
+          "type": "object", "additionalProperties": false, "required": ["geometry", "class", "width", "surface", "name", "traversal"],
+          "properties": {
+            "geometry": {"$ref": "#/$defs/origin"}, "class": {"$ref": "#/$defs/origin"}, "width": {"$ref": "#/$defs/origin"},
+            "surface": {"$ref": "#/$defs/origin"}, "name": {"$ref": "#/$defs/origin"}, "traversal": {"$ref": "#/$defs/origin"}
+          }
+        }
+      }
+    },
+    "building": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "osm", "part", "name", "kind", "footprint", "area_m2", "wall_height_m", "min_height_m", "levels", "roof", "facade",
+                   "base_m", "base_min_m", "landmark", "lod", "chunk", "chunks", "provenance"],
+      "properties": {
+        "id": {"$ref": "#/$defs/feature_id", "description": "Wasteland's id: OSM type letter + id (w123), 'r' suffix for an outline minus its parts, #k for the k-th piece of one element."},
+        "osm": {"$ref": "#/$defs/osm_ref"},
+        "part": {"enum": ["building", "part", "remainder", "unknown"]},
+        "name": {"type": "string"},
+        "kind": {"type": "string", "description": "The OSM building value (house, apartments, church …); 'yes' when untyped."},
+        "footprint": {"$ref": "#/$defs/polygon"},
+        "area_m2": {"type": "number", "exclusiveMinimum": 0},
+        "wall_height_m": {"type": "number", "exclusiveMinimum": 0, "description": "Top of the walls over the base (eaves; the whole height for a flat roof). Walls span min_height_m … wall_height_m; a pitched roof rises above."},
+        "min_height_m": {"$ref": "#/$defs/number_or_null", "description": "Where the walls start over the base (above 0 for floating parts); null when unknown."},
+        "levels": {"type": "integer", "minimum": 1},
+        "roof": {
+          "type": "object", "additionalProperties": false, "required": ["shape", "material", "colour"],
+          "description": "Mapped values, verbatim. Wasteland's render roofs and palette colours are not here; choosing a look is the art layer's job.",
+          "properties": {
+            "shape": {"$ref": "#/$defs/text_or_null", "description": "OSM roof:shape verbatim; else Wasteland's guess, flat or pitched (provenance says which); null when unknown."},
+            "material": {"$ref": "#/$defs/text_or_null", "description": "OSM roof:material verbatim."},
+            "colour": {"$ref": "#/$defs/text_or_null", "description": "OSM roof:colour verbatim."}
+          }
+        },
+        "facade": {
+          "type": "object", "additionalProperties": false, "required": ["material", "colour"],
+          "description": "Mapped values, verbatim (building:material or building:facade:material; building:colour or colour). No wall styles or palette names.",
+          "properties": {"material": {"$ref": "#/$defs/text_or_null"}, "colour": {"$ref": "#/$defs/text_or_null"}}
+        },
+        "base_m": {"$ref": "#/$defs/number_or_null", "description": "Terrain height the building stands on; null for a flat city."},
+        "base_min_m": {"$ref": "#/$defs/number_or_null", "description": "Lowest terrain under the footprint (foundation down to here)."},
+        "landmark": {"type": "boolean"},
+        "lod": {
+          "type": "object", "additionalProperties": false, "required": ["class", "basis"],
+          "properties": {"class": {"enum": ["A", "B", "C", null]}, "basis": {"enum": ["landmark", "unassigned"]}}
+        },
+        "chunk": {"$ref": "#/$defs/chunk_id", "description": "The owner chunk: the building is placed here, once."},
+        "chunks": {"$ref": "#/$defs/chunk_ids", "description": "Every chunk the footprint covers."},
+        "provenance": {
+          "type": "object", "additionalProperties": false,
+          "required": ["footprint", "kind", "name", "wall_height", "levels", "min_height", "roof_shape", "roof_material", "roof_colour",
+                       "facade_material", "facade_colour", "base", "landmark"],
+          "properties": {
+            "footprint": {"$ref": "#/$defs/origin"}, "kind": {"$ref": "#/$defs/origin"}, "name": {"$ref": "#/$defs/origin"},
+            "wall_height": {"$ref": "#/$defs/origin"}, "levels": {"$ref": "#/$defs/origin"}, "min_height": {"$ref": "#/$defs/origin"},
+            "roof_shape": {"$ref": "#/$defs/origin"}, "roof_material": {"$ref": "#/$defs/origin"}, "roof_colour": {"$ref": "#/$defs/origin"},
+            "facade_material": {"$ref": "#/$defs/origin"}, "facade_colour": {"$ref": "#/$defs/origin"}, "base": {"$ref": "#/$defs/origin"},
+            "landmark": {"$ref": "#/$defs/origin"}
+          }
+        }
+      }
+    },
+    "area": {
+      "type": "object", "additionalProperties": false, "required": ["id", "class", "surface", "origin", "polygon", "area_m2", "chunks"],
+      "properties": {
+        "id": {"$ref": "#/$defs/feature_id", "description": "<class>-<content hash>: stable for identical input, not across OSM edits."},
+        "class": {"enum": ["water", "carriageway", "sidewalk", "pedestrian", "path", "parking", "park", "grass", "forest", "cemetery", "pitch"]},
+        "surface": {"$ref": "#/$defs/text_or_null"},
+        "origin": {"$ref": "#/$defs/origin"},
+        "polygon": {"$ref": "#/$defs/polygon"},
+        "area_m2": {"type": "number", "exclusiveMinimum": 0},
+        "chunks": {"$ref": "#/$defs/chunk_ids"}
+      }
+    },
+    "navigation": {
+      "type": "object", "additionalProperties": false, "required": ["collision", "drivable_roads", "junctions", "topology"],
+      "properties": {
+        "collision": {
+          "type": "array",
+          "description": "What blocks movement at ground level: each mapped building outline standing on the ground together with the building volumes inside it, a ground-standing volume no outline holds, and city walls. Holes are kept, building passages and covered ways cut out, parts starting above 2.5 m don't block. Every ground-standing building's footprint is covered by pieces that list it (checked).",
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["id", "kind", "osm", "buildings", "polygon", "chunks"],
+            "properties": {
+              "id": {"$ref": "#/$defs/feature_id"}, "kind": {"enum": ["building", "city_wall"]},
+              "osm": {"$ref": "#/$defs/osm_ref", "description": "The OSM outline (or the volume's element) this piece comes from; null for a city wall."},
+              "buildings": {"type": "array", "items": {"$ref": "#/$defs/feature_id"}, "description": "The OutbreakGeo buildings inside it; empty for a city wall."},
+              "polygon": {"$ref": "#/$defs/polygon"}, "chunks": {"$ref": "#/$defs/chunk_ids"}
+            }
+          }
+        },
+        "drivable_roads": {"type": "array", "items": {"$ref": "#/$defs/feature_id"}},
+        "junctions": {
+          "type": "array",
+          "description": "Where roads meet, inside the bounds. basis osm_node: an OSM node two or more roads share (topology; a bridge over a street shares none). basis shared_position: roads at one position where some road's node ids are unknown, so they may or may not meet (not verified).",
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["id", "point", "roads", "node", "basis"],
+            "properties": {"id": {"$ref": "#/$defs/feature_id"}, "point": {"$ref": "#/$defs/point"},
+                           "roads": {"type": "array", "items": {"$ref": "#/$defs/feature_id"}, "minItems": 2},
+                           "node": {"type": ["integer", "null"]}, "basis": {"enum": ["osm_node", "shared_position"]}}
+          }
+        },
+        "topology": {"enum": ["osm_nodes", "mixed", "positions", "none"], "description": "Whether every road (osm_nodes), some (mixed) or none (positions) has OSM node ids; none: no roads."}
+      }
+    },
+    "chunk": {
+      "type": "object", "additionalProperties": false, "required": ["id", "i", "j", "bounds_m", "buildings", "roads", "areas", "collision"],
+      "properties": {
+        "id": {"$ref": "#/$defs/chunk_id"}, "i": {"type": "integer"}, "j": {"type": "integer"},
+        "bounds_m": {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4, "description": "[x0, y0, x1, y1]: the chunk's part of the bounds (edge chunks are narrower than the grid cell)."},
+        "buildings": {"type": "array", "items": {"$ref": "#/$defs/feature_id"}, "description": "Buildings owned (placed) here."},
+        "roads": {"type": "array", "items": {"$ref": "#/$defs/feature_id"}, "description": "Roads with a span here."},
+        "areas": {"type": "array", "items": {"$ref": "#/$defs/feature_id"}},
+        "collision": {"type": "array", "items": {"$ref": "#/$defs/feature_id"}}
+      }
+    }
+  }
+}

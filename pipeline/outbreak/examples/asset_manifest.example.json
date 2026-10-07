@@ -1,0 +1,36 @@
+{
+  "schema": "outbreak-asset-manifest",
+  "schema_version": 1,
+  "assets": [
+    {
+      "id": "facade.plaster.3bay",
+      "kind": "facade_kit",
+      "status": "placeholder",
+      "roblox": {"asset_id": null, "package_id": null, "path": "ReplicatedStorage/CityKit/Facades/plaster-3bay"},
+      "size_studs": {"x": 34.29, "y": 10.71, "z": 1.0},
+      "fits": {"lod": ["B", "C"], "facade_materials": ["plaster", "brick"], "facade_archetypes": ["nordic-plaster-block"], "levels": {"min": 2, "max": 6}},
+      "license": {"terms": "to be decided (own work)", "author": "Outbreak team", "source": "not made yet"}
+    },
+    {
+      "id": "roof.gable.tiles",
+      "kind": "roof_kit",
+      "status": "placeholder",
+      "fits": {"lod": ["B", "C"], "roof_shapes": ["gabled", "pitched"], "roof_archetypes": ["church-steep-gable"]},
+      "license": {"terms": "to be decided (own work)", "author": "Outbreak team", "source": "not made yet"}
+    },
+    {
+      "id": "window.sash.2x3",
+      "kind": "window_module",
+      "status": "placeholder",
+      "license": {"terms": "to be decided (own work)", "author": "Outbreak team", "source": "not made yet"}
+    },
+    {
+      "id": "landmark.synthby-kyrka",
+      "kind": "special_mesh",
+      "status": "placeholder",
+      "fits": {"lod": ["A"], "buildings": ["w13"]},
+      "license": {"terms": "to be decided (own work)", "author": "Outbreak team", "source": "not made yet"},
+      "note": "LOD A landmark: may be modelled in Blender later, the only place Blender is used."
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "asset_manifest.v1.schema.json",
+  "title": "AssetManifest v1",
+  "description": "The reusable Roblox art a builder may place on OutbreakGeo buildings and streets: modular kits for LOD B/C, special meshes for LOD A. Every asset states its licence, so nothing with unclear rights (such as Wasteland's bundled art) slips in. P00 defines the contract only; no assets exist yet.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "assets"],
+  "properties": {
+    "schema": {"const": "outbreak-asset-manifest"},
+    "schema_version": {"const": 1},
+    "assets": {"type": "array", "items": {"$ref": "#/$defs/asset"}}
+  },
+  "$defs": {
+    "strings": {"type": "array", "items": {"type": "string"}},
+    "asset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "status", "license"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+        "kind": {"enum": ["facade_kit", "roof_kit", "window_module", "door_module", "trim_sheet", "material", "special_mesh"]},
+        "status": {"enum": ["placeholder", "draft", "approved"]},
+        "roblox": {
+          "type": "object", "additionalProperties": false,
+          "properties": {
+            "asset_id": {"type": ["integer", "null"]},
+            "package_id": {"type": ["integer", "null"]},
+            "path": {"type": ["string", "null"], "description": "Where it lives in the place, e.g. ReplicatedStorage/CityKit/Facades/plaster-3bay."}
+          }
+        },
+        "size_studs": {
+          "type": "object", "additionalProperties": false, "required": ["x", "y", "z"],
+          "properties": {"x": {"type": "number", "exclusiveMinimum": 0}, "y": {"type": "number", "exclusiveMinimum": 0}, "z": {"type": "number", "exclusiveMinimum": 0}},
+          "description": "Assets are Roblox-native, so their size is in studs; the unit is in the name on purpose."
+        },
+        "fits": {
+          "type": "object", "additionalProperties": false,
+          "properties": {
+            "lod": {"type": "array", "items": {"enum": ["A", "B", "C"]}},
+            "facade_materials": {"$ref": "#/$defs/strings", "description": "OutbreakGeo building facade.material values (OSM building:material)."},
+            "facade_archetypes": {"$ref": "#/$defs/strings"},
+            "roof_shapes": {"$ref": "#/$defs/strings", "description": "OutbreakGeo building roof.shape values."},
+            "roof_archetypes": {"$ref": "#/$defs/strings"},
+            "building_kinds": {"$ref": "#/$defs/strings"},
+            "levels": {
+              "type": "object", "additionalProperties": false,
+              "properties": {"min": {"type": "integer", "minimum": 1}, "max": {"type": "integer", "minimum": 1}}
+            },
+            "buildings": {"$ref": "#/$defs/strings", "description": "special_mesh: the OutbreakGeo building ids it stands in for."}
+          }
+        },
+        "license": {
+          "type": "object", "additionalProperties": false, "required": ["terms", "author", "source"],
+          "properties": {
+            "terms": {"type": "string", "pattern": "\\S"}, "author": {"type": "string", "pattern": "\\S"}, "source": {"type": "string", "pattern": "\\S"},
+            "evidence": {"type": "string", "pattern": "\\S", "description": "Required once approved: where the rights are documented (licence file, receipt, contract, commit of the own work)."}
+          }
+        },
+        "note": {"type": "string"}
+      },
+      "anyOf": [
+        {"properties": {"status": {"enum": ["placeholder", "draft"]}}},
+        {"properties": {"status": {"const": "approved"}, "license": {"required": ["terms", "author", "source", "evidence"]}}}
+      ]
+    }
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "outbreak_overrides.v1.schema.json",
+  "title": "OutbreakOverrides v1",
+  "description": "Geographic and art corrections for one OutbreakGeo, kept apart from it and applied by the Roblox builder (from P01). Never gameplay: that is the GameplayLayer. Google Street View is not an allowed basis for any entry.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "city", "buildings"],
+  "properties": {
+    "schema": {"const": "outbreak-overrides"},
+    "schema_version": {"const": 1},
+    "city": {"type": "string", "description": "The city slug (metadata.source_city.slug of the OutbreakGeo)."},
+    "geo_sha256": {"anyOf": [{"type": "null"}, {"type": "string", "pattern": "^[0-9a-f]{64}$"}], "description": "The OutbreakGeo file these were written against."},
+    "buildings": {"type": "object", "additionalProperties": {"$ref": "#/$defs/building"}, "description": "Keyed by OutbreakGeo building id (w123, w123r, w123#2)."}
+  },
+  "$defs": {
+    "building": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["basis", "source"],
+      "properties": {
+        "lod": {"enum": ["A", "B", "C"]},
+        "levels": {"type": "integer", "minimum": 1, "maximum": 60},
+        "wall_height_m": {"type": "number", "exclusiveMinimum": 0, "maximum": 250},
+        "building_archetype": {"type": "string", "description": "e.g. nordic-townhouse, warehouse, church."},
+        "facade_archetype": {"type": "string", "description": "A facade kit family the AssetManifest knows (its fits.facade_archetypes)."},
+        "roof_archetype": {"type": "string", "description": "A roof kit family the AssetManifest knows (its fits.roof_archetypes)."},
+        "hide": {"type": "boolean", "description": "Leave the building out (demolished, wrong in OSM)."},
+        "replace_with": {"type": "string", "description": "AssetManifest id of a special_mesh that stands in for the generated building."},
+        "basis": {
+          "enum": ["site_visit", "own_photo", "open_data", "osm_correction", "art_direction"],
+          "description": "Where the correction comes from. osm_correction: OSM itself was (or should be) fixed. art_direction: a choice, not a fact (LOD, archetypes). Street View is deliberately not a value."
+        },
+        "source": {"$ref": "#/$defs/source"},
+        "note": {"type": "string"}
+      },
+      "anyOf": [
+        {"properties": {"basis": {"enum": ["site_visit", "own_photo", "osm_correction", "art_direction"]}}},
+        {"properties": {"basis": {"const": "open_data"}, "source": {"required": ["license"]}}}
+      ]
+    },
+    "source": {
+      "type": "object", "additionalProperties": false, "required": ["reference", "by", "date"],
+      "description": "What makes the correction traceable. A basis label alone establishes nothing.",
+      "properties": {
+        "reference": {"type": "string", "pattern": "\\S", "description": "site_visit: the visit log entry; own_photo: the photo files; open_data: the dataset, version and URL; osm_correction: the OSM changeset or note; art_direction: the decision record."},
+        "by": {"type": "string", "pattern": "\\S", "description": "Who made the observation or decision."},
+        "date": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+        "license": {"type": "string", "pattern": "\\S", "description": "open_data (required): the dataset's licence."}
+      }
+    }
+  }
+}
