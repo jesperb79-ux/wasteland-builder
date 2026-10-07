@@ -1,0 +1,21 @@
+{
+  "name": "Bor\u00e5s",
+  "query": "Bor\u00e5s, Sweden",
+  "display_name": "Bor\u00e5s, Bor\u00e5s kommun, V\u00e4stra G\u00f6talands l\u00e4n, Sverige (central 1 km square)",
+  "country_code": "se",
+  "region": "",
+  "center": [
+    57.7210839,
+    12.9390626
+  ],
+  "size_m": 1000.0,
+  "projection": "wgs84",
+  "bbox": [
+    57.7165945,
+    12.9306722,
+    57.7255733,
+    12.947453
+  ],
+  "osm": null,
+  "attribution": "Map data \u00a9 OpenStreetMap contributors (ODbL)"
+}

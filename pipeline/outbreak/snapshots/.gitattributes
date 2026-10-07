@@ -1,0 +1,3 @@
+# Snapshot files are pinned by SHA-256 byte for byte: never convert their line endings on checkout.
+* -text
+*.gz binary

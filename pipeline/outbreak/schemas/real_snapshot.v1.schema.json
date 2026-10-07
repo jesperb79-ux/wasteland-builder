@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "real_snapshot.v1.schema.json",
+  "title": "RealSnapshot v1",
+  "description": "SNAPSHOT.json of a retained real-source snapshot (pipeline/outbreak/snapshot.py): the place, the OpenStreetMap download and the terrain grid an OutbreakGeo is built from, each pinned by SHA-256, so the build is reproducible offline without downloading again.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "id", "created_utc", "purpose", "place", "files", "osm", "terrain", "pipeline", "policy"],
+  "properties": {
+    "schema": {"const": "outbreak-real-snapshot"},
+    "schema_version": {"const": 1},
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "The snapshot folder's name; the build's city slug."},
+    "created_utc": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"},
+    "purpose": {"type": "string"},
+    "place": {
+      "type": "object", "additionalProperties": false, "required": ["name", "country_code", "center", "size_m", "projection", "bbox_wgs84", "selection"],
+      "properties": {
+        "name": {"type": "string", "pattern": "\\S"}, "country_code": {"type": "string"},
+        "center": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+        "size_m": {"type": "number", "exclusiveMinimum": 0},
+        "projection": {"const": "wgs84"},
+        "bbox_wgs84": {
+          "type": "object", "additionalProperties": false, "required": ["south", "west", "north", "east"],
+          "properties": {"south": {"type": "number"}, "west": {"type": "number"}, "north": {"type": "number"}, "east": {"type": "number"}}
+        },
+        "selection": {"type": "string", "description": "Why this square: the rule it was chosen by."}
+      }
+    },
+    "files": {
+      "type": "object", "additionalProperties": false, "required": ["place.json", "osm.json", "terrain.json"],
+      "properties": {"place.json": {"$ref": "#/$defs/file"}, "osm.json": {"$ref": "#/$defs/file"}, "terrain.json": {"$ref": "#/$defs/file"}}
+    },
+    "osm": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source", "generator", "downloaded_utc", "sources", "timestamp_osm_base", "download_bbox", "elements", "ways", "ways_with_node_ids",
+                     "street_view_tags", "incomplete_relations", "incomplete_ways", "license", "attribution", "license_url"],
+      "properties": {
+        "source": {"type": "string"}, "generator": {"type": "string"},
+        "downloaded_utc": {
+          "type": "object", "additionalProperties": false, "required": ["started", "finished"],
+          "properties": {"started": {"$ref": "#/$defs/stamp"}, "finished": {"$ref": "#/$defs/stamp"}},
+          "description": "This machine's clock when fetch_osm.py started and finished the download: when, not how current the data is."
+        },
+        "sources": {
+          "type": "array", "minItems": 1,
+          "items": {"type": "object", "required": ["source", "elements"],
+                    "properties": {"source": {"type": "string"}, "elements": {"type": "integer", "minimum": 0},
+                                   "server_time_utc": {"anyOf": [{"$ref": "#/$defs/stamp"}, {"type": "null"}]},
+                                   "timestamp_osm_base": {"anyOf": [{"type": "string"}, {"type": "null"}]}}},
+          "description": "Each answer the download was made of (fetch_osm.py's fetch record): the OSM API with its server time, an Overpass mirror with its timestamp_osm_base."
+        },
+        "timestamp_osm_base": {"anyOf": [{"$ref": "#/$defs/stamp"}, {"type": "null"}],
+                               "description": "How current the data is: the oldest time a source states for its part; null when a source states none (unknown)."},
+        "download_bbox": {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4, "description": "south, west, north, east: the play area plus fetch_osm.py's margin."},
+        "elements": {"type": "integer", "minimum": 1}, "ways": {"type": "integer", "minimum": 0}, "ways_with_node_ids": {"type": "integer", "minimum": 0},
+        "street_view_tags": {"type": "array", "maxItems": 0, "description": "OSM elements whose source tags name Google or Street View: must be none."},
+        "incomplete_relations": {"type": "array", "maxItems": 0, "description": "Multipolygons missing a member's geometry (Overpass could not complete them): must be none."},
+        "incomplete_ways": {"type": "array", "maxItems": 0, "description": "Ways whose node ids and geometry don't line up (a node missing from the download): must be none."},
+        "license": {"const": "ODbL-1.0"}, "attribution": {"type": "string", "pattern": "OpenStreetMap contributors"},
+        "license_url": {"type": "string"}
+      }
+    },
+    "terrain": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source", "kind", "tiles", "attribution", "license", "license_url", "projection", "step_m", "n", "coverage", "primary_source"],
+      "properties": {
+        "source": {"type": "string"}, "kind": {"enum": ["dsm", "dtm"]},
+        "tiles": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+        "attribution": {"type": "string", "pattern": "\\S"},
+        "license": {"type": "string", "pattern": "\\S"}, "license_url": {"type": "string", "pattern": "\\S"},
+        "projection": {"const": "wgs84"},
+        "step_m": {"type": "number", "exclusiveMinimum": 0}, "n": {"type": "integer", "minimum": 2},
+        "coverage": {
+          "type": "object", "additionalProperties": false,
+          "required": ["cells", "fallback_cells", "no_data_cells", "play_area_cells", "play_area_fallback_cells", "play_area_no_data_cells"],
+          "properties": {
+            "cells": {"type": "integer", "minimum": 1}, "fallback_cells": {"type": "integer", "minimum": 0}, "no_data_cells": {"type": "integer", "minimum": 0},
+            "play_area_cells": {"type": "integer", "minimum": 1}, "play_area_fallback_cells": {"type": "integer", "minimum": 0},
+            "play_area_no_data_cells": {"const": 0, "description": "Every height inside the play area comes from a source: no holes."},
+            "support_cells": {"type": "integer", "minimum": 1}, "support_fallback_cells": {"type": "integer", "minimum": 0},
+            "support_no_data_cells": {"const": 0, "description": "No holes where prepare_city interpolates its terrain from either (play area + 450 m + one step). Files from before this count: the whole grid's no_data_cells must then be 0."}
+          }
+        },
+        "primary_source": {"type": "string", "description": "Which source was preferred and why the one used was used."}
+      }
+    },
+    "pipeline": {
+      "type": "object", "additionalProperties": false, "required": ["commit", "dirty", "code_sha256"],
+      "properties": {
+        "commit": {"type": ["string", "null"]}, "dirty": {"type": ["boolean", "null"]},
+        "code_sha256": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                        "description": "The download steps that made the files (place, OSM, terrain), line endings normalised."}
+      }
+    },
+    "policy": {
+      "type": "object", "additionalProperties": false, "required": ["street_view", "network"],
+      "properties": {"street_view": {"type": "string"}, "network": {"type": "string"}}
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "stamp": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"},
+    "file": {
+      "type": "object", "additionalProperties": false, "required": ["stored", "sha256", "bytes", "stored_sha256", "stored_bytes"],
+      "properties": {
+        "stored": {"type": "string", "pattern": "^[a-z]+\\.json(\\.gz)?$", "description": "The file in the snapshot folder (gzip with mtime 0 for the large ones)."},
+        "sha256": {"$ref": "#/$defs/sha256", "description": "Of the file's bytes as the download step wrote them (decompressed)."},
+        "bytes": {"type": "integer", "minimum": 1},
+        "stored_sha256": {"$ref": "#/$defs/sha256"}, "stored_bytes": {"type": "integer", "minimum": 1}
+      }
+    }
+  }
+}

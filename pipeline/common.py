@@ -52,30 +52,50 @@ def write_json(path: Path, data, compact=False):
 
 
 class Projection:
-    """Equirectangular local plane around (lat0, lon0). Accurate to centimetres over a few km."""
+    """Equirectangular local plane around (lat0, lon0).
 
-    def __init__(self, lat0: float, lon0: float):
-        self.lat0, self.lon0 = lat0, lon0
-        self.kx = EARTH * math.cos(math.radians(lat0))
+    model 'sphere' (the default, every Wasteland city so far): 111 320 m per degree of latitude and
+    111 320 · cos lat0 per degree of longitude. Shapes are right, but the scale is off by up to ~0.7 %
+    depending on latitude (−0.24 % east–west at 58° N), which doesn't matter for the game.
+    model 'wgs84' (place.json "projection": "wgs84"): the WGS84 ellipsoid's meridional and prime-vertical
+    radii at lat0, so lengths are true to about 1e-4 within a kilometre of the centre."""
+
+    MODELS = ('sphere', 'wgs84')
+
+    def __init__(self, lat0: float, lon0: float, model: str = 'sphere'):
+        if model not in self.MODELS:
+            raise ValueError(f'unknown projection {model!r} (known: {", ".join(self.MODELS)})')
+        self.lat0, self.lon0, self.model = lat0, lon0, model
+        if model == 'sphere':
+            self.kx, self.ky = EARTH * math.cos(math.radians(lat0)), EARTH
+        else:
+            a, f = 6378137.0, 1 / 298.257223563
+            e2 = f * (2 - f)
+            w = 1 - e2 * math.sin(math.radians(lat0)) ** 2
+            self.ky = math.radians(1) * a * (1 - e2) / w ** 1.5
+            self.kx = math.radians(1) * a / math.sqrt(w) * math.cos(math.radians(lat0))
 
     def xy(self, lat: float, lon: float):
-        return ((lon - self.lon0) * self.kx, (lat - self.lat0) * EARTH)
+        return ((lon - self.lon0) * self.kx, (lat - self.lat0) * self.ky)
 
     def latlon(self, x: float, y: float):
-        return (self.lat0 + y / EARTH, self.lon0 + x / self.kx)
+        return (self.lat0 + y / self.ky, self.lon0 + x / self.kx)
 
 
 def projection_for(place: dict) -> Projection:
-    return Projection(*place['center'])
+    return Projection(*place['center'], place.get('projection', 'sphere'))
 
 
-def http_json(url: str, data: dict | None = None, timeout=180, attempts=3):
+def http_json(url: str, data: dict | None = None, timeout=180, attempts=3, info: dict | None = None):
+    """GET (or POST `data`) and parse JSON. `info`, when given, gets the server's Date header of the answer."""
     body = urllib.parse.urlencode(data).encode() if data else None
     last = None
     for attempt in range(attempts):
         try:
             req = urllib.request.Request(url, data=body, headers={'User-Agent': USER_AGENT, 'Accept': 'application/json'})
             with urllib.request.urlopen(req, timeout=timeout) as res:
+                if info is not None:
+                    info['date'] = res.headers.get('Date')
                 return json.loads(res.read().decode('utf-8'))
         except Exception as exc:  # network hiccups, 429/504 from public servers
             last = exc

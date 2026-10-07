@@ -32,7 +32,7 @@ from shapely.geometry.polygon import orient
 from shapely.ops import linemerge, polygonize, unary_union
 from shapely.strtree import STRtree
 
-from common import EARTH, ROOT, city_dir, load_place, projection_for, say, step_done, write_json
+from common import ROOT, city_dir, load_place, projection_for, say, step_done, write_json
 
 STYLE = json.loads((ROOT / 'pipeline/style.json').read_text())
 CELL = 60.0
@@ -820,8 +820,8 @@ def main(argv=None):
         'outskirts': terrain['outskirts'] if terrain else {},
         'roads': [r for r in roads_out if LineString(r['p']).intersects(B)],
         'footprints': [ring_list(q.exterior) for q in footprints] + [w['poly'] for w in walls if w['kind'] == 'city_wall'] + [container_ring(c) for c in barriers],
-        'land': [{'outer': ring_list(p.exterior), 'holes': [ring_list(h) for h in p.interiors]} for p in clean(land, 20)],
-        'areas': {k: [{'outer': ring_list(p.exterior), 'holes': [ring_list(h) for h in p.interiors]} for p in clean(g.simplify(0.8), 25)]
+        'land': [d for p in clean(land, 20) for d in poly_rings(p)],
+        'areas': {k: [d for p in clean(g.simplify(0.8), 25) for d in poly_rings(p)]
                   for k, g in layer_geom.items() if k in ('park', 'grass', 'cemetery', 'forest', 'pitch', 'asphalt', 'cobble', 'paving', 'path', 'sidewalk', 'parking')},
         'landmarks': sorted(landmarks, key=lambda l: -l.get('area', 0)), 'places': places, 'streets': streets,
         'stats': {'buildings': len(buildings), 'roads': len(roads_out), 'trees': len(trees), 'props': len(props), 'walls': len(walls),
@@ -837,6 +837,21 @@ def main(argv=None):
 # ------------------------------------------------------------------------------------------ geometry
 def ring_list(ring):
     return [[r2(x), r2(y)] for x, y in list(ring.coords)[:-1]]
+
+
+def poly_rings(p):
+    """A polygon as [{'outer', 'holes'}] on the centimetre grid. Rounding each point can pinch a narrow ring or
+    collapse a tiny hole, leaving an invalid polygon; such a polygon is snap-rounded to the same grid instead
+    (GEOS keeps that valid), possibly in pieces. A polygon that rounds cleanly is written as before."""
+    d = {'outer': ring_list(p.exterior), 'holes': [ring_list(h) for h in p.interiors]}
+    try:
+        ok = Polygon(d['outer'], d['holes']).is_valid
+    except (ValueError, shapely.errors.GEOSException):
+        ok = False
+    if ok:
+        return [d]
+    return [{'outer': ring_list(q.exterior), 'holes': [ring_list(h) for h in q.interiors]}
+            for q in polys(shapely.set_precision(p, 0.01)) if q.area > 0]
 
 
 def container_ring(c):
@@ -955,8 +970,8 @@ def load_terrain(folder, proj, half, B, land, water, foot, forest, defaults):
         dsm = _bilinear(Z, (Y - src['y0']) / src['step'], (X - src['x0']) / src['step'])
     else:                                                        # older files: a lat/lon grid
         Z = np.array(src['z'], dtype=float).reshape(src['rows'], src['cols'])
-        lat = proj.lat0 + xs / EARTH
-        lon = proj.lon0 + xs / proj.kx
+        lat = proj.latlon(0, xs)[0]
+        lon = proj.latlon(xs, 0)[1]
         dsm = _bilinear(Z, ((src['lat0'] - lat) / src['dlat'])[:, None] + 0 * xs[None, :], ((lon - src['lon0']) / src['dlon'])[None, :] + 0 * xs[:, None])
     ground_model = src.get('kind') == 'dtm'                      # Lantmäteriet: already bare ground
 

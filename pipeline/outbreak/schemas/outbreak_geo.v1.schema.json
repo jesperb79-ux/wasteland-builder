@@ -81,7 +81,8 @@
               "type": "object", "additionalProperties": false, "required": ["x", "y", "z"],
               "properties": {"x": {"const": "east"}, "y": {"const": "north"}, "z": {"const": "up"}}
             },
-            "projection": {"type": "string"}, "to_local": {"type": "string"}, "rings": {"type": "string"}, "heights": {"type": "string"}
+            "projection": {"const": "equirectangular-wgs84", "description": "A local plane with the WGS84 ellipsoid's radii at the centre (common.Projection 'wgs84'): lengths true to about 1e-4 within a kilometre. Wasteland's spherical plane is refused."},
+            "to_local": {"type": "string"}, "rings": {"type": "string"}, "heights": {"type": "string"}
           }
         },
         "chunking": {
@@ -165,12 +166,12 @@
         "length_m": {"type": "number", "minimum": 0},
         "nodes": {
           "anyOf": [{"type": "null"}, {"type": "array", "items": {"type": "integer", "minimum": 1}}],
-          "description": "The OSM node id of each centreline vertex, when osm.json has them (Overpass does; Wasteland's primary download doesn't): null when unknown."
+          "description": "The OSM node id of each centreline vertex, in way order; only when the way in osm.json lines up with the centreline point for point (its geometry, projected and rounded as prepare_city does, is exactly the centreline). null when unknown."
         },
         "layer": {"type": ["integer", "null"], "description": "OSM layer (0 when untagged; null when unknown). Roads meet only at a junction (navigation.junctions)."},
         "tags": {
           "type": "object", "additionalProperties": {"type": "string"},
-          "description": "The OSM tags that decide traversal, verbatim when present: layer, level, bridge, tunnel, covered, oneway, junction, access, vehicle, motor_vehicle, motorcar, foot, bicycle, service."
+          "description": "The OSM tags that decide traversal, verbatim when present: layer, level, bridge, tunnel, covered, oneway, junction, access, vehicle, motor_vehicle, motorcar, foot, bicycle, service, lanes, width (highway and surface are the road's class and surface)."
         },
         "chunks": {"$ref": "#/$defs/chunk_ids"},
         "spans": {
@@ -255,7 +256,7 @@
       }
     },
     "navigation": {
-      "type": "object", "additionalProperties": false, "required": ["collision", "drivable_roads", "junctions", "topology"],
+      "type": "object", "additionalProperties": false, "required": ["collision", "drivable_roads", "junctions", "crossings", "topology"],
       "properties": {
         "collision": {
           "type": "array",
@@ -273,12 +274,23 @@
         "drivable_roads": {"type": "array", "items": {"$ref": "#/$defs/feature_id"}},
         "junctions": {
           "type": "array",
-          "description": "Where roads meet, inside the bounds. basis osm_node: an OSM node two or more roads share (topology; a bridge over a street shares none). basis shared_position: roads at one position where some road's node ids are unknown, so they may or may not meet (not verified).",
+          "description": "Where roads meet, inside the bounds. basis osm_node (verified): an OSM node two or more roads share; that is topology, so a bridge over a street, which shares none, never meets it. basis shared_position (not verified): roads at one position on the same vertical level where some road's node ids are unknown, so they may or may not meet; node null.",
           "items": {
             "type": "object", "additionalProperties": false, "required": ["id", "point", "roads", "node", "basis"],
             "properties": {"id": {"$ref": "#/$defs/feature_id"}, "point": {"$ref": "#/$defs/point"},
                            "roads": {"type": "array", "items": {"$ref": "#/$defs/feature_id"}, "minItems": 2},
                            "node": {"type": ["integer", "null"]}, "basis": {"enum": ["osm_node", "shared_position"]}}
+          }
+        },
+        "crossings": {
+          "type": "array",
+          "description": "Where two roads' centrelines meet in the plane inside the bounds without being joined (no shared node, no shared_position junction): never a junction. status separated: they lie on different vertical levels (layer; else bridge 1, tunnel -1; indoor level). unresolved: the source puts them on one level or can't tell, yet they share no node. differ: the tags among layer, bridge, tunnel, covered, level whose values differ.",
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["id", "point", "roads", "status", "differ"],
+            "properties": {"id": {"$ref": "#/$defs/feature_id"}, "point": {"$ref": "#/$defs/point"},
+                           "roads": {"type": "array", "items": {"$ref": "#/$defs/feature_id"}, "minItems": 2, "maxItems": 2},
+                           "status": {"enum": ["separated", "unresolved"]},
+                           "differ": {"type": "array", "items": {"enum": ["layer", "bridge", "tunnel", "covered", "level"]}}}
           }
         },
         "topology": {"enum": ["osm_nodes", "mixed", "positions", "none"], "description": "Whether every road (osm_nodes), some (mixed) or none (positions) has OSM node ids; none: no roads."}

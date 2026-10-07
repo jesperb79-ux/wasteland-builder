@@ -32,9 +32,10 @@ import zlib
 
 import numpy as np
 
-from common import EARTH, USER_AGENT, city_dir, load_place, projection_for, say, step_done, write_json
+from common import USER_AGENT, city_dir, load_place, projection_for, say, step_done, write_json
 
 MARGIN_M = 600          # the surroundings beyond the play area (hills on the horizon)
+SUPPORT_M = 450.0       # prepare_city's TERRAIN_MARGIN: the terrain city.json keeps beyond the play area
 COPERNICUS = 'https://copernicus-dem-30m.s3.amazonaws.com'
 COPERNICUS_ATTRIBUTION = ('Terrain: Copernicus DEM GLO-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018, '
                           'provided under COPERNICUS by the European Union and ESA')
@@ -283,7 +284,7 @@ def fetch(place: dict) -> dict:
     n = int(math.ceil(2 * ext / step)) + 1
     xs = -ext + np.arange(n) * step
     X, Y = np.meshgrid(xs, xs)                       # row = y (south → north), column = x (west → east)
-    lat, lon = proj.lat0 + Y / EARTH, proj.lon0 + X / proj.kx
+    lat, lon = proj.latlon(X, Y)
     z = np.full(X.shape, np.nan, np.float32)
     sources, attribution, kind = [], [], 'dsm'
     if auth:
@@ -296,6 +297,7 @@ def fetch(place: dict) -> dict:
         except urllib.error.HTTPError as exc:
             hint = ' (no access: order "Markhöjdmodell Nedladdning" on Geotorget)' if exc.code in (401, 403) else ''
             say(f'  ! Lantmäteriet: HTTP {exc.code}{hint}; using Copernicus')
+    primary = ~np.isnan(z)
     if np.isnan(z).any():
         holes = np.isnan(z)
         cz, used = copernicus(lat[holes], lon[holes])
@@ -307,9 +309,23 @@ def fetch(place: dict) -> dict:
     z[(z < -500) | (z > 9000)] = np.nan
     if np.isnan(z).all():
         raise RuntimeError('no elevation data for this place')
-    z = np.where(np.isnan(z), np.nanmin(z), z)
+    missing = np.isnan(z)
+    z = np.where(missing, np.nanmin(z), z)
+    # Where each height came from: a ground-model grid Copernicus had to patch, or cells no source covered (set
+    # to the lowest height), stay visible, over the whole grid, inside the play area and over the support:
+    # every cell prepare_city interpolates its terrain from (the play area, its TERRAIN_MARGIN and one step),
+    # so a hole just outside the play area that still shapes heights inside it is counted too.
+    half = place['size_m'] / 2
+    play = (np.abs(X) <= half) & (np.abs(Y) <= half)
+    support = (np.abs(X) <= half + SUPPORT_M + step) & (np.abs(Y) <= half + SUPPORT_M + step)
+    fallback = ~primary & ~missing if kind == 'dtm' else np.zeros(X.shape, bool)
+    coverage = {'cells': int(z.size), 'fallback_cells': int(fallback.sum()), 'no_data_cells': int(missing.sum()),
+                'play_area_cells': int(play.sum()), 'play_area_fallback_cells': int((fallback & play).sum()),
+                'play_area_no_data_cells': int((missing & play).sum()),
+                'support_cells': int(support.sum()), 'support_fallback_cells': int((fallback & support).sum()),
+                'support_no_data_cells': int((missing & support).sum())}
     return {'source': 'Lantmäteriet Markhöjdmodell (DTM)' if kind == 'dtm' else 'Copernicus DEM GLO-30 (DSM)', 'kind': kind,
-            'attribution': ' · '.join(attribution), 'tiles': sources, 'frame': 'local',
+            'attribution': ' · '.join(attribution), 'tiles': sources, 'frame': 'local', 'projection': proj.model, 'coverage': coverage,
             'x0': float(xs[0]), 'y0': float(xs[0]), 'step': step, 'n': n, 'z': [round(float(v), 2) for v in z.ravel()]}
 
 

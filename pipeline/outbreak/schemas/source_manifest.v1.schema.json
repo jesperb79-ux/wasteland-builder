@@ -65,18 +65,33 @@
             "file": {"type": ["string", "null"]}, "present": {"type": "boolean"}, "sha256": {"$ref": "#/$defs/sha256"}, "bytes": {"type": ["integer", "null"]},
             "encoding": {"$ref": "#/$defs/encoding"},
             "generator": {"type": ["string", "null"]},
-            "timestamp_osm_base": {"type": ["string", "null"], "description": "As osm.json states it (Wasteland's fetch records the data source here, not a time)."},
+            "timestamp_osm_base": {"type": ["string", "null"], "description": "As osm.json states it: the UTC time of the download (fetch_osm.py), the time of the data; older Wasteland files hold the source name here."},
             "elements": {"type": ["integer", "null"]}
           }
         },
         "terrain": {
-          "type": "object", "additionalProperties": false, "required": ["file", "present", "sha256", "bytes", "encoding", "source", "kind", "tiles", "attribution"],
+          "type": "object", "additionalProperties": false, "required": ["file", "present", "sha256", "bytes", "encoding", "source", "kind", "tiles", "attribution", "projection", "coverage"],
           "properties": {
             "file": {"type": ["string", "null"]}, "present": {"type": "boolean"}, "sha256": {"$ref": "#/$defs/sha256"}, "bytes": {"type": ["integer", "null"]},
             "encoding": {"$ref": "#/$defs/encoding"},
             "source": {"type": ["string", "null"]}, "kind": {"enum": ["dsm", "dtm", null]},
             "tiles": {"type": "array", "items": {"type": "string"}, "description": "Copernicus tile names / Lantmäteriet STAC item ids."},
-            "attribution": {"type": ["string", "null"]}
+            "attribution": {"type": ["string", "null"]},
+            "projection": {"type": ["string", "null"], "description": "The local plane the grid was sampled on (fetch_terrain.py); must be the city's."},
+            "coverage": {
+              "anyOf": [
+                {"type": "null"},
+                {"type": "object", "additionalProperties": false,
+                 "required": ["cells", "fallback_cells", "no_data_cells", "play_area_cells", "play_area_fallback_cells", "play_area_no_data_cells"],
+                 "properties": {
+                   "cells": {"type": "integer", "minimum": 0}, "fallback_cells": {"type": "integer", "minimum": 0}, "no_data_cells": {"type": "integer", "minimum": 0},
+                   "play_area_cells": {"type": "integer", "minimum": 0}, "play_area_fallback_cells": {"type": "integer", "minimum": 0},
+                   "play_area_no_data_cells": {"type": "integer", "minimum": 0},
+                   "support_cells": {"type": "integer", "minimum": 0}, "support_fallback_cells": {"type": "integer", "minimum": 0},
+                   "support_no_data_cells": {"type": "integer", "minimum": 0}}}
+              ],
+              "description": "Where the heights came from (fetch_terrain.py): fallback cells are Copernicus patches in a Lantmäteriet grid, no-data cells had no source and hold the lowest height; over the whole grid, the play area and the support (every cell prepare_city interpolates its terrain from; absent in files from before it was counted). null for older terrain.json files."
+            }
           }
         },
         "wasteland_overrides": {

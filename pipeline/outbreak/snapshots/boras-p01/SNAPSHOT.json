@@ -1,0 +1,120 @@
+{
+  "schema": "outbreak-real-snapshot",
+  "schema_version": 1,
+  "id": "boras-p01",
+  "created_utc": "2026-10-07T12:53:31Z",
+  "purpose": "P01 of the Outbreak real-city pipeline: prove the geographic pipeline on about 1 km² of central Borås (road topology, scale, chunks, terrain, reproducibility). Not for Roblox rendering as a whole; the first Roblox PoC uses a ~300 m subset.",
+  "place": {
+    "name": "Borås",
+    "country_code": "se",
+    "center": [
+      57.7210839,
+      12.9390626
+    ],
+    "size_m": 1000.0,
+    "projection": "wgs84",
+    "bbox_wgs84": {
+      "south": 57.7165945,
+      "west": 12.9306722,
+      "north": 57.7255733,
+      "east": 12.947453
+    },
+    "selection": "Best of 121 candidate 1 km squares on a 100 m grid within 500 m of Nominatim's Borås centre (57.7210839, 12.9407407, node 1643360977), scored from one Overpass download (OSM as of 2026-10-07T09:45:54Z): shared-node road junctions x2, cycles in the road graph (route alternatives) x2, buildings x1.5, large public and commercial buildings x1, highway classes x1, pedestrian-street length x1, main-road length x0.75, alleys and passages x0.5, bridges and layered roads x0.5, green x0.5, water x0.5, surface-model relief x0.5, each divided by its maximum over the candidates. The chosen square is centred 100 m west of Nominatim's centre."
+  },
+  "files": {
+    "place.json": {
+      "stored": "place.json",
+      "sha256": "6c956a408d9654df24812bbbf2160b63a7542f532a8dd4ab27bae231d2fbd312",
+      "bytes": 478,
+      "stored_sha256": "6c956a408d9654df24812bbbf2160b63a7542f532a8dd4ab27bae231d2fbd312",
+      "stored_bytes": 478
+    },
+    "osm.json": {
+      "stored": "osm.json.gz",
+      "sha256": "1228a89387e21c9ef87dda811cbfff786ae2db3bc4c9c22733578176d044c0db",
+      "bytes": 2616684,
+      "stored_sha256": "f6cb983443882eb3578fb319df24dafd17ee46bbe47aa426f93a33920e5b00ee",
+      "stored_bytes": 365727
+    },
+    "terrain.json": {
+      "stored": "terrain.json.gz",
+      "sha256": "744311a18266705f9450b399aa3f3f1ae2cde681db57a06d70f3a426ee433d7c",
+      "bytes": 39300,
+      "stored_sha256": "4beed4c26a5687721f6346af6be04c7b2b0b2af4eab14f17b80c5e5a277d966d",
+      "stored_bytes": 13238
+    }
+  },
+  "osm": {
+    "source": "OpenStreetMap: OpenStreetMap API 0.6 map",
+    "generator": "wasteland-builder (OpenStreetMap API 0.6 map)",
+    "downloaded_utc": {
+      "started": "2026-10-07T12:51:53Z",
+      "finished": "2026-10-07T12:53:30Z"
+    },
+    "sources": [
+      {
+        "source": "OpenStreetMap API 0.6 map",
+        "bbox": "57.715876,12.929327,57.726292,12.948799",
+        "server_time_utc": "2026-10-07T12:51:51Z",
+        "elements": 16502
+      },
+      {
+        "source": "Overpass API overpass-api.de",
+        "timestamp_osm_base": "2026-10-07T12:51:52Z",
+        "elements": 10
+      }
+    ],
+    "timestamp_osm_base": "2026-10-07T12:51:51Z",
+    "download_bbox": [
+      57.715876,
+      12.929327,
+      57.726292,
+      12.948799
+    ],
+    "elements": 3571,
+    "ways": 1699,
+    "ways_with_node_ids": 1699,
+    "street_view_tags": [],
+    "incomplete_relations": [],
+    "incomplete_ways": [],
+    "license": "ODbL-1.0",
+    "attribution": "© OpenStreetMap contributors",
+    "license_url": "https://www.openstreetmap.org/copyright"
+  },
+  "terrain": {
+    "source": "Copernicus DEM GLO-30 (DSM)",
+    "kind": "dsm",
+    "tiles": [
+      "Copernicus_DSM_COG_10_N57_00_E012_00_DEM"
+    ],
+    "attribution": "Terrain: Copernicus DEM GLO-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018, provided under COPERNICUS by the European Union and ESA",
+    "license": "Copernicus DEM GLO-30: Copernicus DEM licence (free of charge, attribution required)",
+    "license_url": "https://spacedata.copernicus.eu/collections/copernicus-digital-elevation-model",
+    "projection": "wgs84",
+    "step_m": 30.0,
+    "n": 75,
+    "coverage": {
+      "cells": 5625,
+      "fallback_cells": 0,
+      "no_data_cells": 0,
+      "play_area_cells": 1156,
+      "play_area_fallback_cells": 0,
+      "play_area_no_data_cells": 0
+    },
+    "primary_source": "Lantmäteriet Markhöjdmodell (1 m ground model) is preferred for Swedish places but needs LANTMATERIET_* credentials in .env; none were configured, so fetch_terrain.py used its documented fallback, Copernicus DEM GLO-30 (30 m surface model, which prepare_city cleans of mapped buildings and forests)."
+  },
+  "pipeline": {
+    "commit": "b7c2cd273950393e6ea375f8cec6da12a5c2e126",
+    "dirty": true,
+    "code_sha256": {
+      "pipeline/common.py": "fb023cfe5af951a6769c6f502f36ad14b976d40fbf56d3f66aab005cfe7f58ac",
+      "pipeline/fetch_osm.py": "7626ac77ae71768e304d3de94ea9776df659ce0e532a98ea612927435dee96f3",
+      "pipeline/fetch_terrain.py": "84fd35bef234a0154f99eb874c4d6142a0e008bf3051d95e17e6d0d49af89390",
+      "pipeline/outbreak/snapshot.py": "aa41f3477dad8172f52d07ae500a9a11d330c79f2e128f96d93c72dead42203c"
+    }
+  },
+  "policy": {
+    "street_view": "Not a source. No Google Street View or Google imagery was read; OSM elements whose source tags name Google or Street View would make the snapshot invalid (street_view_tags).",
+    "network": "Live OpenStreetMap and terrain services were read once, when this snapshot was made. Builds read only these files."
+  }
+}

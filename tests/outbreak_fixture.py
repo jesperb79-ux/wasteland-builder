@@ -11,8 +11,8 @@
   (a landmark, typed only by amenity=place_of_worship) and a courtyard block (a multipolygon relation
   with a hole) across the x = −120 chunk border;
 - a ground model rising 2 % to the north.
-Positions are local metres; the pipeline's own Projection turns them into latitude/longitude, so
-prepare_city.py gets them back to the centimetre. The centre is an arbitrary point, used only for the
+Positions are local metres; the pipeline's own Projection (the WGS84 plane an Outbreak source uses) turns
+them into latitude/longitude, so prepare_city.py gets them back to the centimetre. The centre is an arbitrary point, used only for the
 projection.
 """
 import json
@@ -22,7 +22,7 @@ from common import Projection
 SLUG = '_outbreak_selftest'
 CENTER = (60.0, 15.0)
 SIZE_M = 300
-P = Projection(*CENTER)
+P = Projection(*CENTER, 'wgs84')
 
 # OSM way id → (x0, y0, x1, y1, tags), in local metres
 BUILDINGS = {
@@ -76,7 +76,7 @@ def terrain(step=10.0, n=129):
     x0 = -step * (n - 1) / 2
     z = [round(25.0 + 0.02 * (x0 + j * step), 2) for j in range(n) for _ in range(n)]
     return {'source': 'synthetic ground model', 'kind': 'dtm', 'attribution': 'Terrain: synthetic test grid',
-            'tiles': ['synthetic-1'], 'frame': 'local', 'x0': x0, 'y0': x0, 'step': step, 'n': n, 'z': z}
+            'tiles': ['synthetic-1'], 'frame': 'local', 'projection': 'wgs84', 'x0': x0, 'y0': x0, 'step': step, 'n': n, 'z': z}
 
 
 def write(folder):
@@ -84,7 +84,7 @@ def write(folder):
     half = SIZE_M / 2
     (s, w), (n, e) = P.latlon(-half, -half), P.latlon(half, half)
     place = {'name': 'Synthby', 'query': 'Synthby', 'display_name': 'Synthby (synthetic test city)', 'country_code': '',
-             'center': list(CENTER), 'size_m': SIZE_M, 'bbox': [round(s, 6), round(w, 6), round(n, 6), round(e, 6)],
+             'center': list(CENTER), 'size_m': SIZE_M, 'projection': 'wgs84', 'bbox': [round(s, 6), round(w, 6), round(n, 6), round(e, 6)],
              'attribution': 'Map data © OpenStreetMap contributors (ODbL)'}
     osm = {'version': 0.6, 'generator': 'outbreak test fixture', 'osm3s': {'timestamp_osm_base': 'synthetic'}, 'elements': elements()}
     folder.mkdir(parents=True, exist_ok=True)

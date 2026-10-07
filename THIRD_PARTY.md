@@ -3,6 +3,8 @@
 | What | Where | Source | License / terms |
 |---|---|---|---|
 | Map data and everything derived from it (generated `cities/*`, game packs) | `cities/` (not in git) | © OpenStreetMap contributors | ODbL 1.0 — attribute "© OpenStreetMap contributors", share-alike for derived databases |
+| OpenStreetMap extract of central Borås (Outbreak P01 snapshot) | `pipeline/outbreak/snapshots/boras-p01/osm.json.gz` | © OpenStreetMap contributors | ODbL 1.0 (see the folder's `NOTICE.md`) |
+| Terrain heights of central Borås (Outbreak P01 snapshot) | `pipeline/outbreak/snapshots/boras-p01/terrain.json.gz` | Copernicus DEM GLO-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018, provided under COPERNICUS by the European Union and ESA | Copernicus DEM licence: free of charge, attribution required |
 | Place search | at runtime | Nominatim (OSMF) | [usage policy](https://operations.osmfoundation.org/policies/nominatim/): ≤1 request/s, identify the app |
 | Map download | at runtime | OSM API, Overpass API mirrors | [OSM API usage policy](https://operations.osmfoundation.org/policies/api/), Overpass fair use |
 | Vehicles (`game/public/models`, `game/art/battlecars.blend`) | game | Kalmar Wasteland, Anders Bjarby | **author to confirm before publishing** (suggested: CC BY 4.0) |

@@ -1,12 +1,17 @@
 """Download the OpenStreetMap features for a city's bounding box through the Overpass API.
 
 Writes cities/<slug>/osm.json (raw Overpass JSON, ODbL). Re-running reuses the file unless --force.
+Its `fetch` record says when it was downloaded, from which sources, how current each source's data was
+(the OSM API's server time, Overpass's timestamp_osm_base) and which ways or areas came back incomplete.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import math
+import time
+from datetime import timezone
+from email.utils import parsedate_to_datetime
 
 from common import EARTH, city_dir, http_json, load_place, say, step_done
 
@@ -39,28 +44,47 @@ QUERIES = {
 TEMPLATE = '[out:json][timeout:{timeout}]{bbox};\n({body});\nout body geom qt;'
 
 
-def overpass(body, bbox, wait=100):
-    """Run one Overpass query on the first mirror that answers; None when all fail."""
+def _now():
+    return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+
+
+def _http_time(date):
+    """An HTTP Date header as 'YYYY-MM-DDTHH:MM:SSZ' (UTC), or None."""
+    try:
+        return parsedate_to_datetime(date).astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ') if date else None
+    except (TypeError, ValueError):
+        return None
+
+
+def overpass(body, bbox, wait=100, record=None):
+    """Run one Overpass query on the first mirror that answers; None when all fail. `record` (the fetch
+    record main() keeps), when given, gets the mirror and how current its data was (timestamp_osm_base)."""
     query = TEMPLATE.format(timeout=wait - 10, bbox=f'[bbox:{bbox}]' if bbox else '', body=body)
     for url in MIRRORS:
         try:
             data = http_json(url, {'data': query}, timeout=wait, attempts=1)
             if data.get('remark') and ('error' in data['remark'].lower() or 'timed out' in data['remark'].lower()):
                 raise RuntimeError(data['remark'])
+            if record is not None:
+                record['parts'].append({'source': f'Overpass API {url.split("/")[2]}',
+                                        'timestamp_osm_base': (data.get('osm3s') or {}).get('timestamp_osm_base'),
+                                        'elements': len(data['elements'])})
             return data['elements']
         except Exception as exc:
             say(f'    {url.split("/")[2]}: {str(exc)[:80]}')
     return None
 
 
-def osm_api_elements(bbox, depth=0):
+def osm_api_elements(bbox, depth=0, record=None):
     """Fallback: the main OSM API's /map call (complete ways; relations as far as their members are
     inside the box), converted to Overpass-style elements with geometry. Splits the box when the
-    API refuses (more than 50 000 nodes)."""
+    API refuses (more than 50 000 nodes). `record`, when given, gets the server time of each answer
+    and the ways a node was missing from."""
     s, w, n, e = (float(v) for v in bbox.split(','))
     url = f'https://api.openstreetmap.org/api/0.6/map.json?bbox={w:.6f},{s:.6f},{e:.6f},{n:.6f}'
+    info = {}
     try:
-        raw = http_json(url, timeout=180, attempts=2)['elements']
+        raw = http_json(url, timeout=180, attempts=2, info=info)['elements']
     except Exception as exc:
         if depth >= 3:
             raise SystemExit(f'The OpenStreetMap API failed too: {exc}. Try again later or choose a smaller --size.')
@@ -68,7 +92,7 @@ def osm_api_elements(bbox, depth=0):
         mlat, mlon = (s + n) / 2, (w + e) / 2
         out, seen = [], {}
         for q in ((s, w, mlat, mlon), (s, mlon, mlat, e), (mlat, w, n, mlon), (mlat, mlon, n, e)):
-            for el in osm_api_elements(','.join(f'{v:.6f}' for v in q), depth + 1):
+            for el in osm_api_elements(','.join(f'{v:.6f}' for v in q), depth + 1, record):
                 key = (el['type'], el['id'])
                 if key in seen and el['type'] == 'relation':
                     # Fill in member geometry the other quarter had.
@@ -81,6 +105,9 @@ def osm_api_elements(bbox, depth=0):
                     out.append(el)
         return out
     say(f'    {len(raw)} raw elements from api.openstreetmap.org')
+    if record is not None:
+        record['parts'].append({'source': 'OpenStreetMap API 0.6 map', 'bbox': bbox, 'server_time_utc': _http_time(info.get('date')),
+                                'elements': len(raw)})
     nodes = {el['id']: el for el in raw if el['type'] == 'node'}
     ways = {el['id']: el for el in raw if el['type'] == 'way'}
     geom = lambda refs: [{'lat': nodes[r]['lat'], 'lon': nodes[r]['lon']} for r in refs if r in nodes]
@@ -89,13 +116,21 @@ def osm_api_elements(bbox, depth=0):
         if el['type'] == 'node' and el.get('tags'):
             out.append({'type': 'node', 'id': el['id'], 'lat': el['lat'], 'lon': el['lon'], 'tags': el['tags']})
         elif el['type'] == 'way' and el.get('tags'):
-            out.append({'type': 'way', 'id': el['id'], 'tags': el['tags'], 'geometry': geom(el['nodes'])})
+            # Every node id beside the geometry (as Overpass gives them): road topology needs them. A node the
+            # answer lacks leaves the geometry a point short, so the two lists no longer line up: the gap shows
+            # instead of becoming a shortcut nobody can see.
+            g = geom(el['nodes'])
+            out.append({'type': 'way', 'id': el['id'], 'tags': el['tags'], 'nodes': el['nodes'], 'geometry': g})
+            if record is not None and len(g) < len(el['nodes']):
+                record['incomplete_ways'].append(el['id'])
         elif el['type'] == 'relation' and el.get('tags'):
             members = []
             for m in el['members']:
                 mm = {'type': m['type'], 'ref': m['ref'], 'role': m.get('role', '')}
                 if m['type'] == 'way' and m['ref'] in ways:
                     mm['geometry'] = geom(ways[m['ref']]['nodes'])
+                    if record is not None and len(mm['geometry']) < len(ways[m['ref']]['nodes']):
+                        record['incomplete_ways'].append(m['ref'])
                 members.append(mm)
             out.append({'type': 'relation', 'id': el['id'], 'tags': el['tags'], 'members': members})
     return out
@@ -119,15 +154,20 @@ def main(argv=None):
     bbox = f'{s - dlat:.6f},{w - dlon:.6f},{n + dlat:.6f},{e + dlon:.6f}'
     # 1) The OSM API's map call: fast and complete for ways. 2) Overpass completes multipolygons that
     # reach outside the box. If the API is unavailable, Overpass does everything.
+    record = {'started_utc': _now(), 'finished_utc': None, 'parts': [], 'incomplete_ways': [], 'incomplete_relations': []}
     try:
         say('  downloading from api.openstreetmap.org …')
-        elements = osm_api_elements(bbox)
+        elements = osm_api_elements(bbox, record=record)
         remark = 'OpenStreetMap API 0.6 map'
         incomplete = [el['id'] for el in elements if el['type'] == 'relation' and el['tags'].get('type') == 'multipolygon'
                       and any(m['type'] == 'way' and not m.get('geometry') for m in el['members'])]
         if incomplete:
             say(f'  completing {len(incomplete)} large areas through Overpass …')
-            fixed = overpass(f'relation(id:{",".join(map(str, incomplete[:400]))});', bbox=None, wait=40)
+            fixed = None
+            for _ in range(3):                    # public Overpass servers answer 504 now and then; a retry often works
+                fixed = overpass(f'relation(id:{",".join(map(str, incomplete[:400]))});', bbox=None, wait=40, record=record)
+                if fixed:
+                    break
             if fixed:
                 by_id = {el['id']: el for el in fixed if el['type'] == 'relation'}
                 elements = [by_id.get(el['id'], el) if el['type'] == 'relation' else el for el in elements]
@@ -136,17 +176,30 @@ def main(argv=None):
     except SystemExit:
         say('  The OSM API failed — using Overpass instead.')
         elements, seen, remark = [], set(), 'Overpass API'
+        record['parts'].clear()
+        record['incomplete_ways'].clear()
         for part, body in QUERIES.items():
-            data = overpass(body, bbox)
+            data = overpass(body, bbox, record=record)
             if data is None:
                 raise SystemExit(f'Could not download {part}: all Overpass servers are busy. Try again in a few minutes.')
             for el in data:
                 if (el['type'], el['id']) not in seen:
                     seen.add((el['type'], el['id']))
                     elements.append(el)
-    data = {'version': 0.6, 'generator': f'wasteland-builder ({remark})', 'osm3s': {'timestamp_osm_base': remark,
-            'copyright': 'The data included in this document is from www.openstreetmap.org. The data is made available under ODbL.'},
-            'elements': elements}
+    record['finished_utc'] = _now()
+    record['incomplete_ways'] = sorted(set(record['incomplete_ways']))
+    record['incomplete_relations'] = sorted(el['id'] for el in elements if el['type'] == 'relation'
+                                            and el.get('tags', {}).get('type') == 'multipolygon'
+                                            and any(m['type'] == 'way' and not m.get('geometry') for m in el['members']))
+    if record['incomplete_ways'] or record['incomplete_relations']:
+        say(f'  ! incomplete: {len(record["incomplete_ways"])} ways missing a node, {len(record["incomplete_relations"])} areas missing a member')
+    # How current the data is: the oldest time a source states for its part (the OSM API's server time, an
+    # Overpass mirror's timestamp_osm_base); unknown (null) when a part states none. The download time is in `fetch`.
+    times = [p.get('server_time_utc') or p.get('timestamp_osm_base') for p in record['parts']]
+    data = {'version': 0.6, 'generator': f'wasteland-builder ({remark})',
+            'osm3s': {'timestamp_osm_base': min(times) if times and all(times) else None,
+                      'copyright': 'The data included in this document is from www.openstreetmap.org. The data is made available under ODbL.'},
+            'fetch': record, 'elements': elements}
     out.write_text(json.dumps(data, ensure_ascii=False))
     counts = {}
     for el in data['elements']:

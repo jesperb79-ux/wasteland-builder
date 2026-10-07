@@ -28,6 +28,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from collections import defaultdict
 from pathlib import Path
 
@@ -39,8 +40,8 @@ from shapely.strtree import STRtree
 from shapely.validation import explain_validity
 
 import prepare_city
-from common import CITIES, EARTH, ROOT, Projection
-from prepare_city import STYLE, num
+from common import CITIES, ROOT, Projection
+from prepare_city import STYLE, num, r2
 
 from . import schema
 from .chunks import AREA_EPS, DEFAULT_CHUNK_M, Grid, chunk_id, cut_line, parse_chunk_id, to_shape
@@ -48,8 +49,12 @@ from .chunks import AREA_EPS, DEFAULT_CHUNK_M, Grid, chunk_id, cut_line, parse_c
 SCHEMA = 'outbreak-geo'
 SCHEMA_VERSION = 1
 MANIFEST_SCHEMA = 'outbreak-source-manifest'
-ADAPTER_VERSION = '0.2.0'
+ADAPTER_VERSION = '0.3.0'
 CITY_VERSIONS = {1}
+# The local plane OutbreakGeo is in: place.json "projection": "wgs84" (common.Projection). Wasteland's default
+# spherical plane is off in scale by up to ~0.7 % (0.24 % east-west in Sweden), so it is refused.
+PROJECTION = 'wgs84'
+PROJECTION_NAME = 'equirectangular-wgs84'
 OSM_ATTRIBUTION = 'Map data © OpenStreetMap contributors (ODbL)'
 LEGACY_ENCODING = 'cp1252'      # Wasteland on Windows writes JSON in the ANSI code page (Western: cp1252)
 FLOATING_M = 2.5                # a building part starting higher than this doesn't block the ground (prepare_city's rule)
@@ -58,9 +63,12 @@ WORLD_TOLERANCE_M = 1e-6
 # motor_vehicle, oneway …) is carried raw in each road's tags for the game to judge.
 DRIVABLE = {'motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'living_street', 'service',
             'track', 'busway', 'road', 'raceway', 'motorway_link', 'trunk_link', 'primary_link', 'secondary_link', 'tertiary_link'}
-# OSM tags that decide how a road is traversed and how it meets others, copied verbatim when present.
+# OSM tags that decide how a road is traversed and how it meets others, copied verbatim when present (the
+# highway and surface values are the road's class and surface), with the mapped lanes and width.
 TRAVERSAL_TAGS = ('layer', 'level', 'bridge', 'tunnel', 'covered', 'oneway', 'junction', 'access', 'vehicle', 'motor_vehicle',
-                  'motorcar', 'foot', 'bicycle', 'service')
+                  'motorcar', 'foot', 'bicycle', 'service', 'lanes', 'width')
+# The tags that place a road vertically; two roads crossing in the plane where these differ are told apart.
+LEVEL_TAGS = ('layer', 'bridge', 'tunnel', 'covered', 'level')
 # Files whose content decides the output: Wasteland's preprocessing and this adapter. Pinned by SHA-256.
 CODE_FILES = ('pipeline/common.py', 'pipeline/prepare_city.py', 'pipeline/style.json')
 # building=* values prepare_city doesn't build (its outline filter, mirrored to read the mapped outlines).
@@ -320,9 +328,10 @@ def clean_rebuild(folder: Path, settings: dict) -> dict:
 # ------------------------------------------------------------------------------------------ the adapter
 class _Adapter:
     def __init__(self, city, osm, settings: dict, grid: Grid, proj: Projection, warnings: list):
-        self.city, self.settings, self.grid, self.warnings = city, settings, grid, warnings
+        self.city, self.settings, self.grid, self.proj, self.warnings = city, settings, grid, proj, warnings
         self.world = grid.world.buffer(WORLD_TOLERANCE_M, join_style=2)
         self.tag_index, self.way_nodes, self.osm_reader = None, {}, None
+        self.unmatched_nodes = []   # roads whose osm.json node ids don't line up with their centreline
         if isinstance(osm, dict):
             if not isinstance(osm.get('elements'), list):
                 raise AdapterError('osm.json has no "elements" list')
@@ -337,10 +346,11 @@ class _Adapter:
                     seen[key] = _canonical(el)
                     self.tag_index[key] = el.get('tags') or {}
                     nodes, geom = el.get('nodes'), el.get('geometry')
-                    # Overpass keeps a way's node ids beside its geometry; Wasteland's primary download doesn't.
+                    # A way's node ids beside its geometry, one per point (fetch_osm.py and Overpass keep both).
                     if el['type'] == 'way' and isinstance(nodes, list) and isinstance(geom, list) and len(nodes) == len(geom) \
-                            and all(geom) and all(_int(n) for n in nodes):
-                        self.way_nodes[el.get('id')] = nodes
+                            and all(isinstance(g, dict) and _finite(g.get('lat')) and _finite(g.get('lon')) for g in geom) \
+                            and all(_int(n) and n > 0 for n in nodes):
+                        self.way_nodes[el.get('id')] = (nodes, geom)
             self.osm_reader = prepare_city.OSM(osm, proj)
         self.missing_tags = 0
         self.passages = []          # building passages and covered ways, cut out of building collision
@@ -515,11 +525,10 @@ class _Adapter:
                 self.passages.append(LineString(pts).buffer(width / 2 + 0.3, cap_style=2))
             elif ground is None:
                 self.warn(f'{what}: a covered way whose layer or level can\'t be read; it is not cut out of building collision')
-        nodes = self.way_nodes.get(ref['id']) if ref and ref['type'] == 'way' else None
         return {
             'id': fid, 'osm': ref, 'name': name, 'class': kind, 'drivable': kind in DRIVABLE,
             'width_m': float(width), 'surface': surface, 'centerline': pts, 'length_m': sum(math.dist(a, b) for a, b in zip(pts, pts[1:])),
-            'nodes': list(nodes) if nodes and len(nodes) == len(pts) else None,
+            'nodes': self.road_nodes(fid, ref, pts),
             'layer': layer, 'tags': {k: str(tags[k]) for k in TRAVERSAL_TAGS if k in tags},
             'chunks': sorted({chunk_id(i, j) for i, j, _, _ in spans}, key=parse_chunk_id),
             'spans': [{'chunk': chunk_id(i, j), 's0_m': s0, 's1_m': s1} for i, j, s0, s1 in spans],
@@ -529,6 +538,19 @@ class _Adapter:
                 'name': 'none' if not name else origin('osm'), 'traversal': origin('osm'),
             },
         }
+
+    def road_nodes(self, fid, ref, pts):
+        """The OSM node id of each centreline vertex, or None. Ids are attached only where the way in osm.json
+        lines up with the centreline point for point: its geometry, projected and rounded as prepare_city does,
+        must be exactly the centreline, so an id can't land on the wrong vertex or on a road it doesn't belong to."""
+        if not ref or ref['type'] != 'way' or ref['id'] not in self.way_nodes:
+            return None
+        nodes, geom = self.way_nodes[ref['id']]
+        expected = [[r2(x) + 0.0, r2(y) + 0.0] for x, y in (self.proj.xy(g['lat'], g['lon']) for g in geom)]
+        if len(nodes) != len(pts) or expected != pts:
+            self.unmatched_nodes.append(fid)
+            return None
+        return list(nodes)
 
     # ---------------------------------------------------------------- areas, water, collision, junctions
     def polygon_feature(self, prefix, raw_poly, extra, what):
@@ -618,7 +640,9 @@ class _Adapter:
         try:
             for el, tags, g in self.osm_reader.areas(lambda t: 'building' in t and t['building'] not in NOT_BUILT):
                 ref = {'type': el['type'], 'id': el['id']}
-                found[f'{el["type"][0]}{el["id"]}'] += [(ref, tags, p) for p in prepare_city.clean(g.intersection(inner), 4.0)]
+                pieces = prepare_city.clean(g.intersection(inner), 4.0)
+                if pieces:                       # an outline outside the play area (the download has a margin) has none
+                    found[f'{el["type"][0]}{el["id"]}'] += [(ref, tags, p) for p in pieces]
         except (KeyError, TypeError, ValueError) as exc:
             raise AdapterError(f'osm.json is malformed: {exc!r}') from None
         return {fid: (pieces[0][0], pieces[0][1], unary_union([p for _, _, p in pieces])) for fid, pieces in found.items()}
@@ -691,9 +715,12 @@ class _Adapter:
     def topology(self, roads):
         """How far road connectivity is known: OSM node ids for every road, for some, or for none."""
         with_nodes = sum(1 for r in roads if r['nodes'] is not None)
+        if self.unmatched_nodes:
+            self.warn(f'{len(self.unmatched_nodes)} roads have node ids in osm.json that don\'t line up with their centreline '
+                      f'point for point; their ids are not used: {", ".join(sorted(self.unmatched_nodes)[:20])}')
         if with_nodes < len(roads):
-            self.warn(f'{len(roads) - with_nodes} roads have no OSM node ids (Wasteland\'s primary download keeps none): '
-                      'where they touch other roads the junction is marked shared_position, not verified')
+            self.warn(f'{len(roads) - with_nodes} roads have no usable OSM node ids: where they touch other roads at the same '
+                      'level the junction is marked shared_position, not verified')
         return 'none' if not roads else 'osm_nodes' if with_nodes == len(roads) else 'positions' if not with_nodes else 'mixed'
 
     # ---------------------------------------------------------------- terrain
@@ -735,28 +762,112 @@ class _Adapter:
         }
 
 
+def vertical_level(road: dict):
+    """Where a road lies vertically, from its OSM tags: (layer, level). The layer is the tagged one, else 1 on a
+    bridge, −1 in a tunnel (a building passage runs at the ground), else 0; None when it can't be read (a
+    malformed layer) or the tags are unknown (no osm.json). The level is the indoor level when tagged other
+    than 0. A covered way stays at its layer: a roof over a street doesn't lift it."""
+    t = road['tags']
+    if 'layer' in t:
+        z = road['layer']
+    elif road['layer'] is None:
+        z = None
+    elif t.get('bridge', 'no') != 'no':
+        z = 1
+    elif t.get('tunnel', 'no') not in ('no', 'building_passage'):
+        z = -1
+    else:
+        z = 0
+    level = t.get('level')
+    return (z, None if level in (None, '', '0') else level)
+
+
 def junctions(roads, grid: Grid) -> list[dict]:
-    """Where roads meet, inside the bounds. With OSM node ids, a node two roads share: that is topology,
-    and roads that only cross in the plane (a bridge over a street) don't meet, even at one position.
-    Where a road's node ids are unknown, roads at one position are only possibly connected: such a
-    junction says so (basis shared_position, node null)."""
+    """Where roads meet, inside the bounds.
+
+    basis osm_node (verified): an OSM node two or more roads share. That is topology, nothing else is:
+    roads that only cross in the plane (a bridge over a street) don't meet, even at one position.
+    basis shared_position (not verified): where some road at a position has no usable node ids, the roads at
+    that position on the same vertical level (vertical_level) are possibly connected; node null. Roads on
+    different levels at one position never form one (they are a crossing, see crossings)."""
     at = defaultdict(list)
     for r in roads:
         for (x, y), n in zip(r['centerline'], r['nodes'] or [None] * len(r['centerline'])):
             if grid.contains(x, y):
-                at[(x, y)].append((r['id'], n))
+                at[(x, y)].append((r, n))
     out = []
     for (x, y), hits in at.items():
         by_node = defaultdict(set)
-        for rid, n in hits:
+        for r, n in hits:
             if n is not None:
-                by_node[n].add(rid)
+                by_node[n].add(r['id'])
         out += [{'id': f'j:n{n}', 'point': [x, y], 'roads': sorted(ids), 'node': n, 'basis': 'osm_node'}
                 for n, ids in by_node.items() if len(ids) > 1]
-        ids = {rid for rid, _ in hits}
-        if len(ids) > 1 and any(n is None for _, n in hits):
-            out.append({'id': f'j:{x:.2f},{y:.2f}', 'point': [x, y], 'roads': sorted(ids), 'node': None, 'basis': 'shared_position'})
+        if not any(n is None for _, n in hits):
+            continue
+        groups, unknown = defaultdict(set), defaultdict(bool)
+        for r, n in hits:
+            groups[vertical_level(r)].add(r['id'])
+            unknown[vertical_level(r)] |= n is None
+        # Only where a road on that level has no node id here: roads that all have ids meet by them or not at all.
+        levels = sorted((lv for lv, ids in groups.items() if len(ids) > 1 and unknown[lv]), key=_canonical)
+        for k, lv in enumerate(levels, 1):
+            suffix = f'#{k}' if len(levels) > 1 else ''
+            out.append({'id': f'j:{x:.2f},{y:.2f}{suffix}', 'point': [x, y], 'roads': sorted(groups[lv]), 'node': None,
+                        'basis': 'shared_position'})
     return sorted(out, key=lambda j: j['id'])
+
+
+def _meeting_points(g) -> list[tuple]:
+    """The points where two centrelines meet: each point, and both ends of a stretch they share."""
+    out = []
+    for part in shapely.get_parts(g):
+        if part.is_empty:
+            continue
+        if part.geom_type == 'Point':
+            out.append((part.x, part.y))
+        else:
+            cs = list(part.coords)
+            out += [cs[0], cs[-1]]
+    return out
+
+
+def crossings(roads, grid: Grid, joined=None) -> list[dict]:
+    """Where two roads' centrelines meet in the plane inside the bounds without being joined there: not at a
+    node both share (osm_node junction) and not in one shared_position junction. Each is a fact a road
+    builder needs, never a junction: status separated when the two lie on different vertical levels (layer,
+    bridge, tunnel, indoor level; `differ` names the tags whose values differ), unresolved when the source
+    puts them on one level, or can't tell, yet they share no node (an unmapped junction, or roads that
+    really pass each other)."""
+    if joined is None:
+        joined = junctions(roads, grid)
+    together = defaultdict(list)                     # (road, road) → the points where a junction joins them
+    for j in joined:
+        for p in j['roads']:
+            for q in j['roads']:
+                if p < q:
+                    together[(p, q)].append(j['point'])
+    ordered = sorted(roads, key=lambda r: r['id'])
+    lines = [LineString(r['centerline']) for r in ordered]
+    tree = STRtree(lines)
+    out = {}
+    for a, ga in enumerate(lines):
+        for b in sorted(int(k) for k in tree.query(ga)):
+            if b <= a:
+                continue
+            ra, rb = ordered[a], ordered[b]
+            for x, y in _meeting_points(ga.intersection(lines[b])):
+                x, y = float(x) + 0.0, float(y) + 0.0
+                # A junction point is a shared vertex; GEOS returns it exactly, the tolerance is only a guard.
+                if not grid.contains(x, y) or any(math.dist((x, y), p) <= 1e-6 for p in together.get((ra['id'], rb['id']), ())):
+                    continue
+                la, lb = vertical_level(ra), vertical_level(rb)
+                separated = None not in (la[0], lb[0]) and la != lb
+                differ = sorted(k for k in LEVEL_TAGS if ra['tags'].get(k) != rb['tags'].get(k))
+                cid = f'x:{ra["id"]}:{rb["id"]}:{x:.3f},{y:.3f}'
+                out.setdefault(cid, {'id': cid, 'point': [x, y], 'roads': [ra['id'], rb['id']],
+                                     'status': 'separated' if separated else 'unresolved', 'differ': differ})
+    return [out[k] for k in sorted(out)]
 
 
 def raster_covers(bounds, x0, y0, step, n) -> bool:
@@ -840,7 +951,16 @@ def build_geo(city, *, slug=None, osm=None, overrides=None, terrain_src=None, in
         raise PolicyError(REFUSAL.format(', '.join(refinements)))
     settings = dict((overrides or {}).get('defaults') or {})
 
-    proj = Projection(lat0, lon0)
+    model = place.get('projection', 'sphere')
+    if model not in Projection.MODELS:
+        raise AdapterError(f'city.json place: unknown projection {model!r} (known: {", ".join(Projection.MODELS)})')
+    if model != PROJECTION:
+        sphere, true = Projection(lat0, lon0), Projection(lat0, lon0, PROJECTION)
+        raise PolicyError(f'the city was built on Wasteland\'s spherical plane (place.json has no "projection": "{PROJECTION}"), whose '
+                          f'lengths are off by {100 * (sphere.kx / true.kx - 1):+.2f} % east-west and {100 * (sphere.ky / true.ky - 1):+.2f} % '
+                          f'north-south at this latitude, so its metres aren\'t metres. Set "projection": "{PROJECTION}" in place.json and '
+                          'run fetch (for the terrain), terrain and prepare again.')
+    proj = Projection(lat0, lon0, PROJECTION)
     grid = Grid((-half, -half, half, half), chunk_size)
     ad = _Adapter(city, osm, settings, grid, proj, warnings)
     if osm is None:
@@ -853,7 +973,18 @@ def build_geo(city, *, slug=None, osm=None, overrides=None, terrain_src=None, in
     areas = ad.areas()
     collision = ad.collision(buildings)
     topology = ad.topology(roads)
+    joined = junctions(roads, grid)
+    crossed = crossings(roads, grid, joined)
+    unresolved = sum(1 for c in crossed if c['status'] == 'unresolved')
+    if unresolved:
+        ad.warn(f'{unresolved} places where two roads cross in the plane on one level without sharing a node '
+                '(navigation.crossings, status unresolved): not joined')
     terrain = ad.terrain(terrain_src)
+    # A height grid sampled on another plane than the city's would put every height in the wrong place (2.6 m
+    # off at the grid's edge in Borås). Only a terrain the city uses matters; a flat city ignores terrain.json.
+    if terrain is not None and isinstance(terrain_src, dict) and terrain_src.get('projection', 'sphere') != PROJECTION:
+        raise PolicyError(f'terrain.json was sampled on another plane ({terrain_src.get("projection", "sphere")!r}) than the city '
+                          f'({PROJECTION!r}), so its heights would be misplaced: fetch it again (build --only terrain --refresh)')
     if ad.missing_tags:
         ad.warn(f'{ad.missing_tags} features have no element in osm.json: their provenance is "unknown"')
 
@@ -898,7 +1029,9 @@ def build_geo(city, *, slug=None, osm=None, overrides=None, terrain_src=None, in
                     'elements': len(osm_meta.get('elements') or []) if osm_meta else None},
             'terrain': {**_record(inputs, 'terrain', tsrc is not None),
                         'source': tsrc.get('source') if tsrc else None, 'kind': tsrc.get('kind') if tsrc else None,
-                        'tiles': list(tsrc.get('tiles') or []) if tsrc else [], 'attribution': tsrc.get('attribution') if tsrc else None},
+                        'tiles': list(tsrc.get('tiles') or []) if tsrc else [], 'attribution': tsrc.get('attribution') if tsrc else None,
+                        'projection': tsrc.get('projection') if tsrc else None,
+                        'coverage': tsrc.get('coverage') if tsrc and isinstance(tsrc.get('coverage'), dict) else None},
             'wasteland_overrides': {**_record(inputs, 'overrides', isinstance(overrides, dict)), 'build_settings': settings},
         },
         'pinning': ('Inputs and code are pinned by SHA-256. Rebuilding the same OutbreakGeo needs these exact files: archive '
@@ -916,8 +1049,9 @@ def build_geo(city, *, slug=None, osm=None, overrides=None, terrain_src=None, in
                        'wgs84': {'south': rnd(s, 7), 'west': rnd(w, 7), 'north': rnd(n, 7), 'east': rnd(e, 7)}},
             'coordinates': {
                 'unit': 'm', 'frame': 'local tangent plane', 'origin': 'the place centre', 'axes': {'x': 'east', 'y': 'north', 'z': 'up'},
-                'projection': 'equirectangular',
-                'to_local': f'x = (lon - lon0) * {EARTH:g} * cos(lat0); y = (lat - lat0) * {EARTH:g}',
+                'projection': PROJECTION_NAME,
+                'to_local': (f'x = (lon - lon0) * {proj.kx!r}; y = (lat - lat0) * {proj.ky!r} (metres per degree from the WGS84 '
+                             'prime-vertical and meridional radii at lat0)'),
                 'rings': 'outer rings counter-clockwise, holes clockwise, no repeated closing point',
                 'heights': 'metres over the terrain datum (terrain.vertical_datum); building heights over the building base',
             },
@@ -945,7 +1079,7 @@ def build_geo(city, *, slug=None, osm=None, overrides=None, terrain_src=None, in
         'buildings': buildings,
         'areas': areas,
         'navigation': {'collision': collision, 'drivable_roads': [r['id'] for r in roads if r['drivable']],
-                       'junctions': junctions(roads, grid), 'topology': topology},
+                       'junctions': joined, 'crossings': crossed, 'topology': topology},
         'chunks': chunks_out,
     }
 
@@ -978,7 +1112,9 @@ def check_geo(geo: dict) -> list[str]:
         errs.append('metadata.chunking: the grid is anchored at [0, 0] and count is the number of chunks')
     if not (x0 == -x1 and y0 == -y1 and x1 - x0 == y1 - y0 == meta['bounds']['size_m']):
         errs.append('metadata.bounds: not a square of size_m centred on the place')
-    proj = Projection(meta['center']['lat'], meta['center']['lon'])
+    if meta['coordinates']['projection'] != PROJECTION_NAME:
+        errs.append(f'metadata.coordinates.projection must be {PROJECTION_NAME} (lengths true to the WGS84 ellipsoid)')
+    proj = Projection(meta['center']['lat'], meta['center']['lon'], PROJECTION)
     (s, w), (n, e) = proj.latlon(x0, y0), proj.latlon(x1, y1)
     wgs = meta['bounds']['wgs84']
     if max(abs(s - wgs['south']), abs(w - wgs['west']), abs(n - wgs['north']), abs(e - wgs['east'])) > 1e-6:
@@ -1122,8 +1258,17 @@ def check_geo(geo: dict) -> list[str]:
     nav = geo['navigation']
     if nav['drivable_roads'] != [r['id'] for r in geo['roads'] if r['drivable']]:
         errs.append('navigation.drivable_roads disagrees with the roads')
-    if nav['junctions'] != junctions(geo['roads'], grid):
-        errs.append('navigation.junctions are not exactly where the roads share a node (or, without node ids, a position)')
+    # One OSM node, one place: an id at two positions was attached to the wrong vertex somewhere.
+    node_at = {}
+    for r in geo['roads']:
+        for p, nd in zip(r['centerline'], r['nodes'] or []):
+            if node_at.setdefault(nd, p) != p:
+                errs.append(f'road {r["id"]}: node {nd} at {p}, elsewhere at {node_at[nd]}')
+    joined = junctions(geo['roads'], grid)
+    if nav['junctions'] != joined:
+        errs.append('navigation.junctions are not exactly where the roads share a node (or, without node ids, a position on one level)')
+    if nav['crossings'] != crossings(geo['roads'], grid, joined):
+        errs.append('navigation.crossings are not exactly where roads meet in the plane without being joined')
     with_nodes = sum(1 for r in geo['roads'] if r['nodes'] is not None)
     expected = 'none' if not geo['roads'] else 'osm_nodes' if with_nodes == len(geo['roads']) else 'positions' if not with_nodes else 'mixed'
     if nav['topology'] != expected:
@@ -1179,9 +1324,11 @@ def git_generator(root: Path = ROOT) -> dict:
     return {'commit': head.stdout.strip(), 'dirty': bool(status.stdout.strip())}
 
 
-def convert_city_dir(folder: Path, *, chunk_size=DEFAULT_CHUNK_M, generator=None, synthetic=False) -> dict:
-    """OutbreakGeo from a Wasteland city folder, after the refinement policy and the clean-rebuild check."""
+def convert_city_dir(folder: Path, *, chunk_size=DEFAULT_CHUNK_M, generator=None, synthetic=False, timings=None) -> dict:
+    """OutbreakGeo from a Wasteland city folder, after the refinement policy and the clean-rebuild check.
+    `timings` (a dict), when given, gets the seconds the clean rebuild and the conversion took."""
     folder = Path(folder)
+    timings = timings if timings is not None else {}
     if not (folder / 'city.json').exists():
         raise AdapterError(f'{folder / "city.json"} is missing. Run: python3 wasteland.py build {folder.name} --only fetch,terrain,prepare')
     traces = refinement_traces(folder)
@@ -1195,16 +1342,21 @@ def convert_city_dir(folder: Path, *, chunk_size=DEFAULT_CHUNK_M, generator=None
     if refinements:
         raise PolicyError(REFUSAL.format(', '.join(refinements)))
     settings = dict((data.get('overrides') or {}).get('defaults') or {})
+    started = time.perf_counter()
     rebuilt = clean_rebuild(folder, settings)
+    timings['clean_rebuild_s'] = time.perf_counter() - started
     if rebuilt != data['city']:
         differ = sorted(k for k in set(rebuilt) | set(data['city']) if rebuilt.get(k) != data['city'].get(k)) if isinstance(data['city'], dict) else ['all']
         raise PolicyError('city.json is not what prepare_city makes from this folder\'s place.json, osm.json and terrain.json with '
                           f'the current code and no refinements (it differs in: {", ".join(differ)}). It was built from other '
                           'inputs, other code or with refinements, so its provenance can\'t be established. Rebuild it: '
                           f'python3 wasteland.py build {folder.name} --only prepare')
-    return build_geo(data['city'], slug=folder.name, osm=data.get('osm'), overrides=data.get('overrides'),
-                     terrain_src=data.get('terrain'), inputs=records, generator=generator, chunk_size=chunk_size,
-                     warnings=warnings, verified=True, synthetic=synthetic)
+    started = time.perf_counter()
+    geo = build_geo(data['city'], slug=folder.name, osm=data.get('osm'), overrides=data.get('overrides'),
+                    terrain_src=data.get('terrain'), inputs=records, generator=generator, chunk_size=chunk_size,
+                    warnings=warnings, verified=True, synthetic=synthetic)
+    timings['build_geo_s'] = time.perf_counter() - started
+    return geo
 
 
 def dumps(geo: dict) -> str:

@@ -59,7 +59,7 @@ def contract(geo):
 
 
 def minimal_city(**extra):
-    return {'version': 1, 'place': {'name': 'Tiny', 'center': [60.0, 15.0]}, 'half': 100, **extra}
+    return {'version': 1, 'place': {'name': 'Tiny', 'center': [60.0, 15.0], 'projection': 'wgs84'}, 'half': 100, **extra}
 
 
 def building(fid, x0, y0, x1, y1, **extra):
@@ -281,7 +281,7 @@ class FixtureCityTest(unittest.TestCase):
         wgs = m['bounds']['wgs84']
         self.assertLess(wgs['south'], 60.0)
         self.assertGreater(wgs['north'], 60.0)
-        self.assertAlmostEqual((wgs['north'] - wgs['south']) * 111_320, 300, delta=0.1)
+        self.assertAlmostEqual((wgs['north'] - wgs['south']) * fx.P.ky, 300, delta=0.1)
         self.assertFalse(any('stud' in k for k in keys_in(self.geo)), 'no studs inside OutbreakGeo')
 
     def test_stable_osm_ids(self):
@@ -933,8 +933,10 @@ class EdgeCaseTest(unittest.TestCase):
         tags = {'w1': {'highway': 'residential', 'oneway': 'yes', 'access': 'destination'}, 'w2': {'highway': 'residential'},
                 'w3': {'highway': 'primary', 'bridge': 'yes', 'layer': '1', 'motor_vehicle': 'no'}}
         nodes = {'w1': [1, 2, 3], 'w2': [2, 9], 'w3': [4, 5, 6]}
-        with_nodes = {'elements': [{'type': 'way', 'id': int(k[1:]), 'tags': t, 'nodes': nodes[k], 'geometry': [{'lat': 60, 'lon': 15}] * len(nodes[k])}
-                                   for k, t in tags.items()]}
+        plane = common.Projection(60.0, 15.0, 'wgs84')
+        lines = {r['id']: r['p'] for r in city['roads']}
+        with_nodes = {'elements': [{'type': 'way', 'id': int(k[1:]), 'tags': t, 'nodes': nodes[k],
+                                    'geometry': [dict(zip(('lat', 'lon'), plane.latlon(*p))) for p in lines[k]]} for k, t in tags.items()]}
         geo = adapter.build_geo(city, osm=with_nodes)
         self.assertEqual(contract(geo), [])
         self.assertEqual(geo['navigation']['topology'], 'osm_nodes')
@@ -942,12 +944,15 @@ class EdgeCaseTest(unittest.TestCase):
         r = {x['id']: x for x in geo['roads']}
         self.assertEqual((r['w3']['nodes'], r['w3']['layer'], r['w3']['tags']), ([4, 5, 6], 1, {'bridge': 'yes', 'layer': '1', 'motor_vehicle': 'no'}))
         self.assertEqual((r['w1']['layer'], r['w1']['tags']), (0, {'oneway': 'yes', 'access': 'destination'}))
-        # Without node ids (Wasteland's primary download) the shared position is reported, marked unverified.
+        # Without node ids (Wasteland's old download) the shared position is reported, marked unverified, and only
+        # for the roads on one level: the bridge at that position is a separated crossing, never part of it.
         geo = adapter.build_geo(city, osm=osm_of(**tags))
         self.assertEqual(contract(geo), [])
         self.assertEqual(geo['navigation']['topology'], 'positions')
         self.assertEqual(geo['navigation']['junctions'],
-                         [{'id': 'j:0.00,0.00', 'point': [0.0, 0.0], 'roads': ['w1', 'w2', 'w3'], 'node': None, 'basis': 'shared_position'}])
+                         [{'id': 'j:0.00,0.00', 'point': [0.0, 0.0], 'roads': ['w1', 'w2'], 'node': None, 'basis': 'shared_position'}])
+        self.assertEqual([(c['roads'], c['status'], c['differ']) for c in geo['navigation']['crossings']],
+                         [(['w1', 'w3'], 'separated', ['bridge', 'layer']), (['w2', 'w3'], 'separated', ['bridge', 'layer'])])
         self.assertTrue(any('shared_position' in w for w in geo['metadata']['warnings']))
         self.assertEqual(adapter.build_geo(city)['roads'][0]['layer'], None, 'unknown without osm.json')
 
